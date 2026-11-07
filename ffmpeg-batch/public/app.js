@@ -244,13 +244,6 @@ function renderFile(parent, t, depth) {
     row.append(info);
   }
   parent.append(row);
-  const logView = row.querySelector('.log-code');
-  if (logView) {
-    const remembered = logScrollStates.get(workspaceViews.activeKey + ':' + t.id);
-    // The first opening follows the latest line; a user reading older lines
-    // keeps that position across periodic tree rerenders.
-    logView.scrollTop = remembered && !remembered.follow ? remembered.top : logView.scrollHeight;
-  }
 }
 function renderNode(parent,node,depth) {
   const dirs = [...node.dirs.values()].sort((a,b) => a.name.localeCompare(b.name,'zh-Hans-CN'));
@@ -269,7 +262,14 @@ function renderTree(s) {
   if (!filtered.length) { container.append(el('div','empty', s.activity === 'scanning' ? `正在探测文件 ${s.scanProgress.done}/${s.scanProgress.total}…` : '没有符合当前筛选条件的视频')); return; }
   const tree=buildTree(filtered); const statMap = fullStats(s.tasks);
   const attach = node => {node.stats = statMap.get(node.id); for (const child of node.dirs.values()) attach(child);};
-  attach(tree); renderNode(container,tree,0);
+  attach(tree);
+  renderNode(container,tree,0);
+  // Nested folder nodes were detached while renderFile ran. Only now, once
+  // the whole tree is attached to the document, can scrollHeight be measured.
+  for (const log of container.querySelectorAll('.log-code')) {
+    const remembered = logScrollStates.get(workspaceViews.activeKey + ':' + log.dataset.taskId);
+    log.scrollTop = remembered && !remembered.follow ? remembered.top : log.scrollHeight;
+  }
 }
 let refreshBusy = false;
 let refreshPending = false;
