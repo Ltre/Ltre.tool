@@ -60,7 +60,11 @@ async function inspector(url){
       try{const result=await evaluate(expression);if(result)return result;}catch{}
       await delay(80);
     }
-    throw new Error('页面等待超时：'+message);
+    let diagnostic;
+    try {
+      diagnostic=await evaluate('({url:location.href,ready:document.readyState,connection:document.getElementById("connection")?.textContent,source:!!document.getElementById("source"),host:!!document.getElementById("workspace-host"),template:!!document.getElementById("task-workspace-template"),state:document.body?.textContent?.slice(0,200)})');
+    }catch(error){diagnostic={error:error.message};}
+    throw new Error('页面等待超时：'+message+'；诊断 '+JSON.stringify(diagnostic));
   }
   return {command,evaluate,until,close:()=>ws.close()};
 }
