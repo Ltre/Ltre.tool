@@ -86,3 +86,19 @@
 :root[data-theme="light"] .dir-row{color:#2c4561}
 :root[data-theme="light"] .dir-row:hover{background:#edf3fa}
 :root[data-theme="light"] .modal-bottom span{color:#58718b}
+
+/* Q1-B: independent file templates, scale guidance, five queue metrics */
+.metrics{grid-template-columns:repeat(5,minmax(0,1fr))}
+@media(max-width:1250px){.metrics{grid-template-columns:repeat(3,minmax(0,1fr))}}
+@media(max-width:850px){
+  .metrics{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .metrics .metric:first-child{grid-column:1/-1}
+}
+.override-tag{display:inline-flex;align-items:center;flex:none;padding:2px 7px;border-radius:6px;
+  border:1px solid #edbb53;background:#503b1b;color:#ffe39b;font-size:11px;font-weight:750;letter-spacing:.1px}
+:root[data-theme="light"] .override-tag{background:#fff0c3;color:#805100;border-color:#d6a743}
+.file-head>span:first-child{overflow:hidden;min-width:0}
+.scale-detail{margin-top:7px;min-width:0}
+.scale-detail input{max-width:100%;width:min(100%,330px)}
+.scale-help{font-size:11px;line-height:1.65;color:var(--sub);margin:4px 0 0;overflow-wrap:anywhere}
+.session-working{font-size:11px;font-weight:700;color:var(--green);border:1px solid currentColor;border-radius:4px;padding:1px 5px}

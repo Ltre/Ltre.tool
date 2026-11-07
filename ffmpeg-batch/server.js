@@ -516,6 +516,10 @@ class Manager {
   }
   get current() {return this.workers.get(this.activeId) || null;}
   get project() {return this.current?.project || null;}
+  projectForSession(id) {
+    const session = this.sessions.find(s => s.id === id);
+    return session ? this.loadWorker(session).project : null;
+  }
   get activity() {return this.current?.activity || 'idle';}
   get note() {return this.current?.note || this.recoveryNote || '';}
   get shouldPause() {return this.current?.shouldPause || false;}
@@ -638,7 +642,9 @@ const server = http.createServer(async (req, res) => {
     if (req.method === 'GET' && url.pathname === '/api/status') return json(res, 200, manager.snapshot());
     if ((req.method === 'GET' || req.method === 'HEAD') && url.pathname === '/api/video') {
       if (req.headers['sec-fetch-site'] === 'cross-site') return json(res, 403, {error: '禁止跨站预览'});
-      return workflow.serveVideo(req, res, url, manager.project);
+      const sessionId = url.searchParams.get('session');
+      const project = sessionId ? manager.projectForSession(sessionId) : manager.project;
+      return workflow.serveVideo(req, res, url, project);
     }
     if (req.method === 'GET' && url.pathname === '/api/directories') return json(res, 200, await directories(url.searchParams.get('path')));
     if (req.method === 'GET' && url.pathname === '/api/export/commands') return textFile(res, 'ffmpeg-commands.txt', manager.exportCommands(), 'text/plain; charset=utf-8');

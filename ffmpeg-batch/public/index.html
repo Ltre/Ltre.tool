@@ -37,17 +37,20 @@
             <option value="">不设置</option><option value="libx265">libx265 / H.265</option><option value="libx264">libx264 / H.264</option>
             <option value="libsvtav1">libsvtav1 / AV1</option><option value="hevc_nvenc">hevc_nvenc</option><option value="h264_nvenc">h264_nvenc</option><option value="custom">其他 / 手动填写</option>
           </select><input id="tpl-custom" class="hidden" placeholder="FFmpeg 编码器名称" spellcheck="false"></div>
-          <div class="field"><label for="tpl-scale">缩放（-vf scale）</label><select id="tpl-scale"><option value="none">不设置</option><option value="percent">按百分比等比例缩放</option><option value="fit720">适配 1280×720（兼容旧任务）</option></select>
-          <div id="tpl-percent-wrap" class="field-inline hidden"><input id="tpl-percent" type="number" min="1" max="1000" step="0.1" value="100"><span>% · 例如 120 放大、80 缩小</span></div></div>
+          <div class="field"><label for="tpl-scale">缩放（-vf scale）</label><select id="tpl-scale"><option value="none">不设置</option><option value="percent">按百分比等比例缩放</option><option value="fraction">按分数等比例缩放</option><option value="shortEdge">以短边 N px 为目标等比例缩放</option><option value="fit720">适配 1280×720（兼容旧任务）</option></select>
+          <div id="tpl-percent-wrap" class="field-inline hidden"><input id="tpl-percent" type="number" min="1" max="1000" step="0.1" value="100"><span>% · 例如 120 放大、80 缩小</span></div>
+          <div id="tpl-fraction-wrap" class="scale-detail hidden"><input id="tpl-fraction" type="text" value="2/3" placeholder="分子/分母，例如 720/1080"><p class="scale-help">输入正整数分子/分母，如 720/1080 或 2/3。全程使用精确分数计算，不先转为循环小数；仅在输出像素尺寸时四舍五入到最接近的偶数。</p></div>
+          <div id="tpl-short-edge-wrap" class="scale-detail hidden"><input id="tpl-short-edge" type="number" min="2" max="16384" step="1" value="720" placeholder="目标短边 px"><p class="scale-help">短边设为指定像素数，长边按原始比例精确计算，最终取最接近的偶数；如 1920×1080 → 1280×720，1080×1920 → 720×1280。奇数短边可能不兼容部分编码器。</p></div></div>
           <div class="field"><label for="tpl-crf">质量参数（-crf）</label><input id="tpl-crf" type="number" min="0" max="63" step="0.1" placeholder="不设置"></div>
         </div>
         <div class="line-actions"><button id="save-template" class="secondary" type="button">保存批量模板</button><span class="info">单个视频可在目录树展开后覆盖模板，并指定具体宽高。</span></div>
       </section>
       <section class="panel overview">
-        <div class="section-heading"><div><span class="step">02</span><h2>处理队列</h2></div><span class="subtitle" id="last-scan">尚未扫描</span></div>
+        <div class="section-heading"><div><span class="step">03</span><h2>处理队列</h2></div><span class="subtitle" id="last-scan">尚未扫描</span></div>
         <div class="metrics">
           <div class="metric"><span>视频总数</span><b id="m-total">0</b><small>已扫描文件</small></div>
           <div class="metric"><span>转码完成</span><b id="m-done">0</b><small id="m-percent">0% 完成</small></div>
+          <div class="metric"><span>转码中</span><b id="m-running">0</b><small>当前任务正在处理的视频</small></div>
           <div class="metric"><span>待处理 / 中断</span><b id="m-pending">0</b><small>可恢复</small></div>
           <div class="metric"><span>异常 / 冲突</span><b id="m-failed">0</b><small>需要人工检查</small></div>
         </div>
@@ -64,7 +67,7 @@
       </section>
 
       <section class="panel files">
-        <div class="section-heading"><div><span class="step">03</span><h2>视频目录树</h2></div><div class="toolbar"><select id="filter" aria-label="筛选状态"><option value="all">全部视频</option><option value="pending">待处理</option><option value="done">已完成</option><option value="failed">失败 / 冲突</option><option value="probe_failed">无法探测</option></select><button id="expand" class="ghost">全部展开</button><button id="collapse" class="ghost">全部折叠</button></div></div>
+        <div class="section-heading"><div><span class="step">04</span><h2>视频目录树</h2></div><div class="toolbar"><select id="filter" aria-label="筛选状态"><option value="all">全部视频</option><option value="pending">待处理</option><option value="done">已完成</option><option value="failed">失败 / 冲突</option><option value="probe_failed">无法探测</option></select><button id="expand" class="ghost">全部展开</button><button id="collapse" class="ghost">全部折叠</button></div></div>
         <div class="tree-header"><span>文件及相对路径</span><span>原始 → 目标分辨率</span><span>处理状态</span><span>进度</span></div>
         <div id="tree" class="tree"><div class="empty">配置源目录并扫描后，将按实际目录层级列出每个视频和对应命令。</div></div>
         <div class="tree-footer">点击视频行可查看具体的 FFmpeg 命令、输出位置、运行记录及错误原因。已完成文件不会重复转码。</div>
@@ -86,8 +89,10 @@
       <div class="modal-content"><label class="inherit"><input id="item-inherit" type="checkbox" checked> 使用当前任务的批量模板</label>
         <fieldset id="item-fields" disabled><div class="template-fields">
           <div class="field"><label for="item-codec">视频编码器（-c:v）</label><select id="item-codec"><option value="">不设置</option><option value="libx265">libx265</option><option value="libx264">libx264</option><option value="libsvtav1">libsvtav1</option><option value="hevc_nvenc">hevc_nvenc</option><option value="h264_nvenc">h264_nvenc</option><option value="custom">其他 / 手动填写</option></select><input id="item-custom" class="hidden" placeholder="自定义视频编码器"></div>
-          <div class="field"><label for="item-scale">缩放（-vf scale）</label><select id="item-scale"><option value="none">不设置</option><option value="percent">百分比缩放</option><option value="exact">指定宽度和高度</option><option value="fit720">适配 1280×720</option></select>
+          <div class="field"><label for="item-scale">缩放（-vf scale）</label><select id="item-scale"><option value="none">不设置</option><option value="percent">百分比缩放</option><option value="fraction">分数等比例缩放</option><option value="shortEdge">短边 N px 等比例缩放</option><option value="exact">指定宽度和高度</option><option value="fit720">适配 1280×720</option></select>
             <div id="item-percent-wrap" class="field-inline hidden"><input id="item-percent" type="number" min="1" max="1000" step="0.1" value="100"><span>%</span></div>
+            <div id="item-fraction-wrap" class="scale-detail hidden"><input id="item-fraction" type="text" value="2/3" placeholder="720/1080"><p class="scale-help">填写分子/分母，如 720/1080 或 2/3。按整数分数精确计算，仅最终尺寸取最接近的偶数。</p></div>
+            <div id="item-short-edge-wrap" class="scale-detail hidden"><input id="item-short-edge" type="number" min="2" max="16384" step="1" value="720" placeholder="短边像素"><p class="scale-help">短边直接采用 N px，长边按比例精确计算并取最接近的偶数。奇数短边可能无法编码。</p></div>
             <div id="item-dimensions" class="field-inline hidden"><input id="item-width" type="number" min="2" max="16384" placeholder="宽"><span>×</span><input id="item-height" type="number" min="2" max="16384" placeholder="高"></div></div>
           <div class="field"><label for="item-crf">CRF</label><input id="item-crf" type="number" min="0" max="63" step="0.1" placeholder="不设置"></div>
         </div></fieldset>

@@ -54,21 +54,23 @@ async function action(endpoint, body = {}) {
 }
 function enableControls(s) {
   const idle = s.activity === 'idle'; const trans = s.activity === 'transcoding';
-  for (const id of ['configure','scan','retry','verify','verify-deep']) $(id).disabled = !idle;
-  $('new-task').disabled = !idle;
+  for (const id of ['configure','scan']) $(id).disabled = !idle && !draftSession;
+  for (const id of ['retry','verify','verify-deep']) $(id).disabled = !idle || draftSession;
+  $('new-task').disabled = false;
   $('save-template').disabled = !idle || !s.configured || draftSession;
-  $('start').disabled = !idle || !s.scannedAt;
-  $('pause').disabled = !trans || s.shouldPause;
-  $('stop').disabled = !trans;
-  $('browse-source').disabled = !idle;
-  $('source').disabled = !idle;
-  $('output').disabled = !idle;
-  $('default-output').disabled = !idle;
+  $('start').disabled = !idle || !s.scannedAt || draftSession;
+  $('pause').disabled = !trans || s.shouldPause || draftSession;
+  $('stop').disabled = !trans || draftSession;
+  $('browse-source').disabled = !idle && !draftSession;
+  $('source').disabled = !idle && !draftSession;
+  $('output').disabled = !idle && !draftSession;
+  $('default-output').disabled = !idle && !draftSession;
 }
 function renderSummary(s) {
   const c = s.counts;
   setText('m-total', c.total);
   setText('m-done', c.done);
+  setText('m-running', c.running || 0);
   setText('m-pending', (c.pending || 0) + (c.interrupted || 0));
   setText('m-failed', (c.failed || 0) + (c.probe_failed || 0) + (c.conflict || 0));
   const percent = c.total ? c.done / c.total * 100 : 0;
@@ -140,6 +142,7 @@ function renderFile(parent, t, depth) {
   const hdr = el('button', 'file-head'); hdr.type='button'; hdr.style.paddingLeft=(12+depth*18)+'px';
   const left = nameBox(t.relative.split('/').pop(), null, false);
   left.firstChild.textContent = openedFiles.has(t.id) ? '▾' : '▸';
+  if (t.override) left.append(el('span','override-tag','独立参数'));
   hdr.append(left);
   hdr.append(el('span', 'resolution', t.width ? `${t.width}×${t.height} → ${t.targetWidth}×${t.targetHeight}` : '探测失败'));
   const badgeSlot = el('span'); badgeSlot.append(el('span', 'status-pill '+t.status, mapStatus[t.status] || t.status)); hdr.append(badgeSlot);
@@ -212,11 +215,11 @@ $('output').addEventListener('input', () => { outputEdited=true; });
 $('default-output').addEventListener('click', () => { $('output').value=defaultOut($('source').value.trim()); outputEdited=false; });
 $('configure').addEventListener('click', async () => {
   const ok = await action('/api/config', {source:$('source').value.trim(),output:$('output').value.trim()});
-  if (ok) {draftSession = false; await refresh();}
+  if (ok) {draftSession = false; lastProjectKey = ''; await refresh();}
 });
 $('scan').addEventListener('click', async () => {
   const ok = await action('/api/scan', {source:$('source').value.trim(),output:$('output').value.trim()});
-  if (ok) {draftSession = false; await refresh();}
+  if (ok) {draftSession = false; lastProjectKey = ''; await refresh();}
 });
 $('start').addEventListener('click', () => action('/api/start'));
 $('pause').addEventListener('click', () => action('/api/pause'));
@@ -251,7 +254,7 @@ $('dialog').addEventListener('click',e=>{ if(e.target===$('dialog')) $('dialog')
 $('dir-select').addEventListener('click',()=>{
   if (!activeModalDir) return toast('请选择目录');
   $('source').value=activeModalDir;
-  $('output').value=defaultOut(activeModalDir);
+  $('output').value=defaultOut(activeModalDir) + (draftSession ? '_task_' + Date.now().toString(36) : '');
   outputEdited=false;
   $('dialog').classList.add('hidden');
 });
