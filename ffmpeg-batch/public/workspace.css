@@ -102,3 +102,22 @@
 .scale-detail input{max-width:100%;width:min(100%,330px)}
 .scale-help{font-size:11px;line-height:1.65;color:var(--sub);margin:4px 0 0;overflow-wrap:anywhere}
 .session-working{font-size:11px;font-weight:700;color:var(--green);border:1px solid currentColor;border-radius:4px;padding:1px 5px}
+
+/* Q1-C: a physically independent DOM subtree is mounted for each task. */
+#workspace-host,.task-workspace{min-width:0}
+.session-draft{border:1px dashed var(--accent);background:var(--panel2);cursor:default}
+.export-actions a[aria-disabled="true"]{opacity:.4;pointer-events:none;cursor:not-allowed}
+.compare-footer{position:sticky;bottom:0;z-index:2;display:flex;align-items:center;justify-content:center;
+  flex-wrap:wrap;gap:12px;padding:12px 16px;border-top:1px solid var(--border);background:var(--panel)}
+.compare-controls{display:flex;gap:8px;align-items:center;justify-content:center;flex-wrap:wrap}
+.compare-controls button{min-width:52px;padding:10px 13px;font-size:14px;font-variant-numeric:tabular-nums}
+.compare-controls #compare-play-toggle{min-width:74px;font-size:18px}
+#compare-sync-state{font-size:11px;color:var(--sub)}
+.compare-modal .compare-video video{max-height:calc(100dvh - 245px)}
+@media(max-width:800px){
+  .compare-modal .compare-video video{max-height:max(70px,calc((100dvh - 295px)/2))}
+  .compare-footer{padding:9px 6px}
+  .compare-controls{gap:5px}
+  .compare-controls button{min-width:42px;padding:9px}
+  .compare-controls #compare-play-toggle{min-width:57px}
+}

@@ -23,6 +23,7 @@
         <p>保留源视频，按源目录树生成孪生输出目录。所有视频先用 ffprobe 探测实际分辨率，再按可配置模板转码，并持久化每次任务记录。</p>
       </section>
 
+      <template id="task-workspace-template"><div class="task-workspace">
       <section class="panel setup">
         <div class="section-heading"><div><span class="step">01</span><h2>项目目录</h2></div><span class="subtitle">绝对路径 · 源与输出必须同级</span></div>
         <div class="field"><label for="source">源视频根目录</label><div class="input-row"><input id="source" spellcheck="false" placeholder="例如 D:\\Videos 或 /home/user/videos"><button id="browse-source" class="secondary" type="button">浏览目录</button></div></div>
@@ -76,6 +77,7 @@
         <div><h2>结果与验收报告</h2><p>命令列表按目录层级导出；报告包含源/目标分辨率、字节大小、进度、尝试次数、验收结果和失败原因。</p></div>
         <div class="export-actions"><a href="/api/export/commands" id="export-cmd" download>导出所有命令 .txt</a><a href="/api/export/report.csv" id="export-csv" download>验收报告 .csv</a><a href="/api/export/report.json" id="export-json" download>详细状态 .json</a></div>
       </section>
+      </div></template><div id="workspace-host" aria-live="off"></div>
       <footer>H.265 / 720p Manager · Node.js 无第三方依赖 · 仅监听 127.0.0.1</footer>
     </main>
     </div>
@@ -103,10 +105,22 @@
     <div class="modal compare-modal"><div class="modal-top"><h3>双视频对比 · <span id="compare-title"></span></h3><button id="close-compare" class="ghost">关闭 ×</button></div>
       <div class="compare-grid"><div class="compare-video"><h4>源视频</h4><video id="compare-source" controls preload="metadata" playsinline></video></div>
       <div class="compare-video"><h4>转码结果</h4><video id="compare-output" controls preload="metadata" playsinline></video></div></div>
-      <div class="compare-hint">两个播放器可分别播放和定位。浏览器若不支持 HEVC、MKV 等格式，视频可能无法直接播放；这不代表文件损坏。</div>
+      <div class="compare-hint">两个播放器可独立操作，也可使用下方统一按钮同步播放、暂停与定位。左右方向键：单击 ±2 秒，快速连击 ±8 秒。部分 HEVC、MKV 等格式可能无法在浏览器播放，不代表文件损坏。</div>
+      <div class="compare-footer">
+        <div class="compare-controls" role="group" aria-label="两个视频统一播放控制">
+          <button type="button" class="secondary" id="compare-back-8" aria-label="两个视频后退8秒">−8</button>
+          <button type="button" class="secondary" id="compare-back-2" aria-label="两个视频后退2秒">−2</button>
+          <button type="button" class="primary" id="compare-play-toggle" aria-label="两个视频同步播放" aria-pressed="false">▶</button>
+          <button type="button" class="secondary" id="compare-next-2" aria-label="两个视频前进2秒">+2</button>
+          <button type="button" class="secondary" id="compare-next-8" aria-label="两个视频前进8秒">+8</button>
+        </div>
+        <span id="compare-sync-state" role="status" aria-live="polite">两个视频已就绪</span>
+      </div>
     </div>
   </div>
   <script src="/tree-stats.js" defer></script>
+  <script src="/workspace-dom.js" defer></script>
+  <script src="/compare-sync.js" defer></script>
   <script src="/app.js" defer></script>
   <script src="/workspace-ui.js" defer></script>
 </body>

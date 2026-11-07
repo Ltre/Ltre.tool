@@ -18,7 +18,7 @@ test('目录汇总、单文件编辑及自动应用目录存在',()=>{
   assert.match(app,/VideoTreeStats\.summarize/);
   assert.match(app,/openFileTemplate\(t\)/);
   assert.match(app,/openCompare\(t\)/);
-  assert.match(app,/action\('\/api\/scan', \{source:/);
+  assert.match(app,/applyProject\('\/api\/scan'\)/);
 });
 test('宽窄视口播放器不会超过容器边界',()=>{
   const css=get('public/workspace.css');
@@ -46,4 +46,41 @@ test('Q1-B：两种缩放表单、独立参数标识及队列转码中统计',()
   assert.match(workspace,/\$\(prefix\+'-short-edge'\)/);
   const css=get('public/workspace.css');
   assert.match(css,/\.metrics\{grid-template-columns:repeat\(5,minmax\(0,1fr\)\)/);
+});
+
+test('Q1-C：独立工作区模板真实克隆，旧任务状态不混入新建草稿',()=>{
+  const html=get('public/index.html');
+  const first=html.indexOf('<template id="task-workspace-template">');
+  const last=html.indexOf('</template>',first);
+  const section=html.slice(first,last);
+  assert.ok(first>0&&last>first);
+  assert.equal((section.match(/<section class="panel/g)||[]).length,5,'01～04 和报告应整套克隆');
+  for(const className of ['setup','template-panel','overview','files','export'])
+    assert.match(section,new RegExp('class="panel '+className+'"'));
+  assert.ok(html.indexOf('id="workspace-host"')>last,'工作区只能挂载到模板之后的宿主节点');
+  for(const script of ['workspace-dom.js','compare-sync.js'])assert.match(html,new RegExp('src="/'+script.replace('.','\\.')+'"'));
+  const app=get('public/app.js'),ui=get('public/workspace-ui.js');
+  assert.match(app,/workspaceViews\.activate\(key\)/);
+  assert.match(app,/workspaceViews\.drop\(DRAFT_KEY\)/);
+  assert.match(app,/function draftSnapshot/);
+  assert.match(app,/function bindWorkspaceControls/);
+  assert.match(ui,/createDraftWorkspace/);
+  assert.doesNotMatch(ui,/\$\('source'\)\.value\s*=\s*source/);
+  assert.match(app,/link\.removeAttribute\('href'\)/,'新草稿不能导出旧任务的结果');
+});
+test('Q1-C：日志滚动末行、五个同步按钮和方向键双击规则',()=>{
+  const html=get('public/index.html');
+  for(const id of ['compare-back-8','compare-back-2','compare-play-toggle','compare-next-2','compare-next-8'])
+    assert.match(html,new RegExp('id="'+id+'"'));
+  const footer=html.slice(html.indexOf('class="compare-footer"'));
+  for(const id of ['compare-back-8','compare-back-2','compare-play-toggle','compare-next-2','compare-next-8'])
+    assert.ok(footer.includes(id));
+  const app=get('public/app.js'),ui=get('public/workspace-ui.js'),sync=get('public/compare-sync.js');
+  assert.match(app,/log\.scrollTop\s*=/);
+  assert.match(app,/logScrollStates/);
+  assert.match(ui,/compareController\.activate\(\)/);
+  assert.match(ui,/compareController\.deactivate\(\)/);
+  assert.match(sync,/DOUBLE_TAP_MS=280/);
+  assert.match(sync,/seekBy\(direction\*8\)/);
+  assert.match(sync,/seekBy\(pending\.direction\*2\)/);
 });
