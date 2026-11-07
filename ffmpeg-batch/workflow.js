@@ -5,17 +5,38 @@ const path = require('node:path');
 
 const LEGACY = Object.freeze({videoCodec: 'libx265', scaleMode: 'fit720', percent: 100, crf: ''});
 const EMPTY = Object.freeze({videoCodec: '', scaleMode: 'none', percent: 100, crf: ''});
+function gcd(a, b) { while (b) [a, b] = [b, a % b]; return a; }
+function normalizeFraction(input) {
+  const match = /^\s*(\d{1,12})\s*\/\s*(\d{1,12})\s*$/.exec(String(input ?? ''));
+  if (!match) throw new Error('分数请输入正整数分子/正整数分母，例如 720/1080 或 2/3');
+  const numerator = BigInt(match[1]), denominator = BigInt(match[2]);
+  if (!numerator || !denominator) throw new Error('分数的分子和分母必须大于 0');
+  const divisor = gcd(numerator, denominator);
+  return `${numerator / divisor}/${denominator / divisor}`;
+}
+function roundEvenRatio(value, numerator, denominator) {
+  // Exact half-up rounding to the nearest even integer; no binary float division.
+  const result = ((BigInt(value) * numerator + denominator) / (denominator * 2n)) * 2n;
+  if (result < 2n || result > 16384n) throw new Error('目标尺寸必须在 2～16384 像素范围内');
+  return Number(result);
+}
 function normalizeTemplate(input = {}, allowExact = false, allowLegacy = false) {
   if (input == null || typeof input !== 'object' || Array.isArray(input)) throw new Error('模板必须是对象');
   const videoCodec = String(input.videoCodec ?? '').trim();
   if (videoCodec && !/^[a-zA-Z0-9_.-]{1,64}$/.test(videoCodec)) throw new Error('视频编码器名称不合法');
   const scaleMode = String(input.scaleMode ?? 'none');
-  if (!['none', 'percent', ...(allowExact ? ['exact'] : []), ...(allowLegacy ? ['fit720'] : [])].includes(scaleMode)) throw new Error('不支持的缩放模式');
+  if (!['none', 'percent', 'fraction', 'shortEdge', ...(allowExact ? ['exact'] : []), ...(allowLegacy ? ['fit720'] : [])].includes(scaleMode)) throw new Error('不支持的缩放模式');
   const percent = Number(input.percent ?? 100);
   if (!Number.isFinite(percent) || percent < 1 || percent > 1000) throw new Error('缩放比例必须在 1%～1000% 之间');
   const crf = input.crf == null || String(input.crf).trim() === '' ? '' : String(input.crf).trim();
   if (crf && (!/^(?:\d+(?:\.\d+)?)$/.test(crf) || Number(crf) > 63)) throw new Error('CRF 必须为 0～63 之间的数值');
   const result = {videoCodec, scaleMode, percent, crf};
+  if (scaleMode === 'fraction') result.fraction = normalizeFraction(input.fraction);
+  if (scaleMode === 'shortEdge') {
+    const shortEdge = Number(input.shortEdge);
+    if (!Number.isSafeInteger(shortEdge) || shortEdge < 2 || shortEdge > 16384) throw new Error('目标短边必须为 2～16384 的整数');
+    result.shortEdge = shortEdge;
+  }
   if (scaleMode === 'exact') {
     const width = Number(input.width), height = Number(input.height);
     if (!Number.isSafeInteger(width) || !Number.isSafeInteger(height) || width < 2 || height < 2 || width > 16384 || height > 16384) {
@@ -34,6 +55,17 @@ function calculateTarget(meta, template, fit720) {
   switch (template.scaleMode) {
     case 'fit720': return fit720(meta.width, meta.height);
     case 'exact': return {width: template.width, height: template.height};
+    case 'fraction': {
+      const [a,b] = template.fraction.split('/').map(BigInt);
+      return {width: roundEvenRatio(meta.width, a, b), height: roundEvenRatio(meta.height, a, b)};
+    }
+    case 'shortEdge': {
+      const short = Math.min(meta.width, meta.height);
+      const scale = BigInt(template.shortEdge), base = BigInt(short);
+      // The user-specified short edge remains exact, including odd pixel values.
+      return {width: meta.width === short ? template.shortEdge : roundEvenRatio(meta.width, scale, base),
+        height: meta.height === short ? template.shortEdge : roundEvenRatio(meta.height, scale, base)};
+    }
     case 'percent': {
       const even = value => Math.max(2, Math.round(value / 2) * 2);
       return {width: even(meta.width * template.percent / 100), height: even(meta.height * template.percent / 100)};
@@ -109,4 +141,4 @@ async function serveVideo(req, res, url, project) {
   res.on('close', () => stream.destroy());
   stream.pipe(res);
 }
-module.exports = {LEGACY, EMPTY, normalizeTemplate, effectiveTemplate, calculateTarget, commandArgs, expectedCodec, serveVideo, within};
+module.exports = {LEGACY, EMPTY, normalizeTemplate, normalizeFraction, effectiveTemplate, calculateTarget, commandArgs, expectedCodec, serveVideo, within};

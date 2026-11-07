@@ -29,6 +29,16 @@ test('HTTP: 未应用目录直接扫描、模板覆盖、实际转码、历史�
   assert.equal(s.tasks[0].targetWidth,160);assert.equal(s.tasks[0].targetHeight,90);
   assert.ok(!s.tasks[0].command.includes('-c:v'));
   const firstId=s.id, fileId=s.tasks[0].id;
+  r=await api('/api/template',{videoCodec:'libx264',scaleMode:'fraction',fraction:'720/1080'});
+  assert.equal(r.status,200);
+  s=await status();
+  assert.equal(s.template.fraction,'2/3');
+  assert.equal(s.tasks[0].targetWidth,106);
+  assert.equal(s.tasks[0].targetHeight,60);
+  r=await api('/api/template',{videoCodec:'libx264',scaleMode:'shortEdge',shortEdge:72});
+  assert.equal(r.status,200);
+  s=await status();assert.equal(s.tasks[0].targetWidth,128);assert.equal(s.tasks[0].targetHeight,72);
+
   r=await api('/api/template',{videoCodec:'libx264',scaleMode:'percent',percent:80,crf:'23'});assert.equal(r.status,200);
   s=await status();assert.equal(s.tasks[0].targetWidth,128);assert.equal(s.tasks[0].targetHeight,72);
   assert.match(s.tasks[0].command,/\-c:v/);assert.match(s.tasks[0].command,/\-crf/);

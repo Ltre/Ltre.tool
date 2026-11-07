@@ -12,8 +12,19 @@ const { randomUUID } = require('node:crypto');
 const workflow = require('./workflow');
 
 const APP_DIR = __dirname;
-const CONFIG_FILE = path.join(APP_DIR, '.manager-config.json');
-const REGISTRY_FILE = path.join(APP_DIR, '.manager-sessions.json');
+const DATA_DIR = process.env.FFMPEG_BATCH_DATA_DIR ? path.resolve(process.env.FFMPEG_BATCH_DATA_DIR) : path.join(APP_DIR, '.data');
+const CONFIG_FILE = path.join(DATA_DIR, '.manager-config.json');
+const REGISTRY_FILE = path.join(DATA_DIR, '.manager-sessions.json');
+// Import older local files only if the new destination does not exist.
+function migrateLocalData(fromDir = APP_DIR, toDir = DATA_DIR) {
+  fs.mkdirSync(toDir, {recursive: true});
+  for (const filename of ['.manager-config.json', '.manager-sessions.json']) {
+    const previous = path.join(fromDir, filename), next = path.join(toDir, filename);
+    if (!fs.existsSync(next) && fs.existsSync(previous)) fs.copyFileSync(previous, next);
+  }
+}
+if (process.env.FFMPEG_BATCH_DATA_DIR) fs.mkdirSync(DATA_DIR, {recursive: true});
+else migrateLocalData();
 const STATE_FILE = '.h265-720p-state.json';
 const PORT = Number(process.env.PORT || 4008);
 const BIND = '127.0.0.1'; // never expose file-system browsing to the LAN
@@ -137,8 +148,9 @@ function commandFor(task) {
 }
 function parseTime(s) { const m = /time=\s*(\d+):(\d+):(\d+(?:\.\d+)?)/g; let x, last; while ((x = m.exec(s))) last = x; return last ? Number(last[1]) * 3600 + Number(last[2]) * 60 + Number(last[3]) : null; }
 
-class Manager {
-  constructor() {
+class SessionWorker {
+  constructor({isolated = false} = {}) {
+    this.isolated = isolated;
     this.project = null;
     this.activity = 'idle';
     this.note = '';
@@ -146,6 +158,11 @@ class Manager {
     this.shouldPause = false;
     this.runningChild = null;
     this.stopRequested = false;
+    if (this.isolated) {
+      this.sessions = [];
+      this.activeId = null;
+      return;
+    }
     const registry = readJson(REGISTRY_FILE);
     this.sessions = Array.isArray(registry?.sessions) ? registry.sessions : [];
     this.activeId = null;
@@ -181,10 +198,10 @@ class Manager {
     }
     this.activeId = session.id;
     this.persist(); this.persistRegistry();
-    atomicJson(CONFIG_FILE, { source, output });
+    if (!this.isolated) atomicJson(CONFIG_FILE, { source, output });
   }
   persist() { if (this.project) atomicJson(this.stateFile, this.project); }
-  persistRegistry() { atomicJson(REGISTRY_FILE, {version: 1, activeId: this.activeId, sessions: this.sessions}); }
+  persistRegistry() { if (!this.isolated) atomicJson(REGISTRY_FILE, {version: 1, activeId: this.activeId, sessions: this.sessions}); }
   selectSession(id) {
     if (this.activity !== 'idle') throw new Error('当前有任务正在执行，不能切换');
     const session = this.sessions.find(s => s.id === id);
@@ -480,6 +497,115 @@ class Manager {
   }
 }
 
+// Session coordinator: each session owns a persistent project and its own async
+// scanner, encoder child process, cancellation state and queue. Switching the UI
+// never mutates or reloads another session's active worker.
+class Manager {
+  constructor() {
+    this.workers = new Map();
+    const registry = readJson(REGISTRY_FILE);
+    this.sessions = Array.isArray(registry?.sessions) ? registry.sessions.slice() : [];
+    this.activeId = null;
+    const legacy = readJson(CONFIG_FILE);
+    if (!this.sessions.length && legacy?.source && legacy?.output) {
+      try {this.configure(legacy);} catch (e) {this.recoveryNote = readableError(e);}
+    } else if (this.sessions.length) {
+      const preferred = this.sessions.find(x => x.id === registry?.activeId) || this.sessions[0];
+      try {this.selectSession(preferred.id);} catch (e) {this.recoveryNote = readableError(e);}
+    }
+  }
+  get current() {return this.workers.get(this.activeId) || null;}
+  get project() {return this.current?.project || null;}
+  get activity() {return this.current?.activity || 'idle';}
+  get note() {return this.current?.note || this.recoveryNote || '';}
+  get shouldPause() {return this.current?.shouldPause || false;}
+  get runningChild() {return this.current?.runningChild || null;}
+  requireCurrent() {
+    if (!this.current) throw new Error('请先创建并选择任务');
+    return this.current;
+  }
+  persistRegistry() {
+    atomicJson(REGISTRY_FILE, {version: 2, activeId: this.activeId, sessions: this.sessions});
+  }
+  loadWorker(session) {
+    let worker = this.workers.get(session.id);
+    if (worker) return worker;
+    worker = new SessionWorker({isolated: true});
+    worker.openProject(session.source, session.output);
+    // Registry identity is canonical across upgrades from older session files.
+    worker.project.id = session.id;
+    worker.activeId = session.id;
+    this.workers.set(session.id, worker);
+    return worker;
+  }
+  selectSession(id) {
+    const session = this.sessions.find(s => s.id === id);
+    if (!session) throw new Error('任务不存在');
+    this.loadWorker(session);
+    this.activeId = id;
+    this.persistRegistry();
+    atomicJson(CONFIG_FILE, {source: session.source, output: session.output});
+  }
+  configure(input) {
+    if (!input.source || !String(input.source).trim()) throw new Error('请填写源目录');
+    const source = path.resolve(String(input.source).trim());
+    const output = input.output && String(input.output).trim()
+      ? path.resolve(String(input.output).trim())
+      : path.join(path.dirname(source), `${path.basename(source)}_h265_720p`);
+    // If already running, selecting an existing task must never reopen it.
+    const existing = this.sessions.find(s => s.source === source && s.output === output);
+    if (existing) {this.selectSession(existing.id); return;}
+    if (this.sessions.some(s => path.normalize(s.output).toLowerCase() === path.normalize(output).toLowerCase())) {
+      throw new Error('该输出目录已被另一任务占用');
+    }
+    const worker = new SessionWorker({isolated: true});
+    worker.configure({source, output});
+    const session = {id: worker.project.id, source, output, createdAt: worker.project.createdAt};
+    this.workers.set(session.id, worker);
+    this.sessions.unshift(session);
+    this.activeId = session.id;
+    this.persistRegistry();
+    atomicJson(CONFIG_FILE, {source, output});
+  }
+  listSessions() {
+    return this.sessions.map(s => {
+      const worker = this.workers.get(s.id);
+      const project = worker?.project || readJson(path.join(s.output, STATE_FILE));
+      const tasks = project?.tasks || [];
+      return {...s, total: tasks.length, done: tasks.filter(t => t.status === 'done').length,
+        failed: tasks.filter(t => ['failed','interrupted','probe_failed','conflict'].includes(t.status)).length,
+        running: tasks.filter(t => t.status === 'running').length,
+        activity: worker?.activity || 'idle', scannedAt: project?.scanAt || null};
+    });
+  }
+  snapshot() {
+    const worker = this.current;
+    const state = worker ? worker.snapshot() : {configured:false,id:null,source:'',output:'',template:workflow.EMPTY,
+      activity:'idle',shouldPause:false,note:this.recoveryNote || '',scannedAt:null,
+      scanProgress:{done:0,total:0},scanErrors:[],counts:{total:0,pending:0,running:0,done:0,failed:0,interrupted:0,probe_failed:0,conflict:0},
+      sourceBytes:0,outputBytes:0,tasks:[]};
+    return {...state, id:this.activeId, sessions:this.listSessions()};
+  }
+  scan(){return this.requireCurrent().scan();}
+  start(){return this.requireCurrent().start();}
+  pause(){return this.requireCurrent().pause();}
+  stop(){return this.requireCurrent().stop();}
+  verify(options){return this.requireCurrent().verify(options);}
+  resetFailed(){return this.requireCurrent().resetFailed();}
+  saveTemplate(template){return this.requireCurrent().saveTemplate(template);}
+  saveItemTemplate(id,template){return this.requireCurrent().saveItemTemplate(id,template);}
+  exportCommands(){return this.requireCurrent().exportCommands();}
+  exportCsv(){return this.requireCurrent().exportCsv();}
+  shutdown() {
+    for (const worker of this.workers.values()) {
+      worker.shouldPause = true; worker.stopRequested = true;
+      const child = worker.runningChild;
+      if (child) {
+        try {child.kill('SIGTERM');} catch {}
+      }
+    }
+  }
+}
 const manager = new Manager();
 function json(res, status, value) {
   const body = JSON.stringify(value);
@@ -530,19 +656,29 @@ const server = http.createServer(async (req, res) => {
         case '/api/sessions/select': manager.selectSession(body.id); break;
         case '/api/template': manager.saveTemplate(body); break;
         case '/api/template/item': manager.saveItemTemplate(body.id, body.override); break;
-        case '/api/scan':
-          if (manager.activity !== 'idle') throw new Error('已有操作在执行');
-          // Typed but un-applied paths are applied before starting ffprobe.
+        case '/api/scan': {
           if (body.source && (path.resolve(body.source) !== manager.project?.source ||
             (body.output && path.resolve(body.output) !== manager.project?.output))) manager.configure(body);
-          if (!manager.project) throw new Error('请先填写并应用源视频目录');
-          void manager.scan().catch(e => {manager.activity = 'idle'; manager.note = '扫描失败：' + readableError(e);});
+          const worker = manager.requireCurrent();
+          if (worker.activity !== 'idle') throw new Error('当前任务已有操作在执行');
+          void worker.scan().catch(e => {worker.activity = 'idle'; worker.note = '扫描失败：' + readableError(e);});
           break;
-        case '/api/start': if (manager.activity !== 'idle') throw new Error('已有操作在执行'); void manager.start().catch(e => { manager.activity = 'idle'; manager.note = readableError(e); }); break;
+        }
+        case '/api/start': {
+          const worker = manager.requireCurrent();
+          if (worker.activity !== 'idle') throw new Error('当前任务已有操作在执行');
+          void worker.start().catch(e => {worker.activity = 'idle'; worker.note = readableError(e);});
+          break;
+        }
         case '/api/pause': manager.pause(); break;
         case '/api/stop': manager.stop(); break;
         case '/api/retry': manager.resetFailed(); break;
-        case '/api/verify': if (manager.activity !== 'idle') throw new Error('已有操作在执行'); void manager.verify({ deep: !!body.deep }); break;
+        case '/api/verify': {
+          const worker = manager.requireCurrent();
+          if (worker.activity !== 'idle') throw new Error('当前任务已有操作在执行');
+          void worker.verify({ deep: !!body.deep }).catch(e => {worker.activity = 'idle'; worker.note = readableError(e);});
+          break;
+        }
         default: return json(res, 404, { error: '不存在的接口' });
       }
       return json(res, 200, { ok: true, note: manager.note });
@@ -566,12 +702,11 @@ if (require.main === module) {
     console.log('请用此机器的浏览器访问；服务仅监听本机，不对局域网开放。');
   });
   const close = () => {
-    if (manager.runningChild) { manager.stopRequested = true; manager.shouldPause = true;
-      try { manager.runningChild.kill('SIGTERM'); } catch {} }
+    manager.shutdown();
     server.close(() => process.exit(0));
     setTimeout(() => process.exit(1), 2000).unref();
   };
   process.on('SIGINT', close);
   process.on('SIGTERM', close);
 }
-module.exports = { Manager, targetSize, extractMeta, outRelName, commandFor, checkOutput, server, manager };
+module.exports = { Manager, SessionWorker, targetSize, extractMeta, outRelName, commandFor, checkOutput, server, manager, DATA_DIR, migrateLocalData };

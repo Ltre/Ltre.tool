@@ -67,3 +67,30 @@ test('视频预览：Range、HEAD、无效范围、未完成输出和符号链�
   r=await fetch(url+'source');assert.equal(r.status,404);
   r=await fetch(url+'nope');assert.equal(r.status,404);
 });
+
+test('分数缩放：720/1080 与 2/3 完全等价，先整数运算再取整', () => {
+  const input={width:1920,height:1080};
+  const a=normalizeTemplate({scaleMode:'fraction',fraction:'720/1080'});
+  const b=normalizeTemplate({scaleMode:'fraction',fraction:'2/3'});
+  assert.equal(a.fraction,'2/3');
+  assert.deepEqual(a,b);
+  assert.deepEqual(calculateTarget(input,a,()=>{}),{width:1280,height:720});
+  assert.deepEqual(calculateTarget(input,b,()=>{}),{width:1280,height:720});
+  assert.deepEqual(calculateTarget({width:1080,height:1920},b,()=>{}),{width:720,height:1280});
+  assert.deepEqual(calculateTarget({width:6000,height:3000},normalizeTemplate({scaleMode:'fraction',fraction:'1/3'}),()=>{}),{width:2000,height:1000});
+});
+test('分数校验与目标分辨率边界', () => {
+  for(const fraction of ['','2','2/0','0/3','-2/3','1.5/2','2/3/4','a/3','9999999999999/1']) {
+    assert.throws(()=>normalizeTemplate({scaleMode:'fraction',fraction}),/分数/);
+  }
+  assert.throws(()=>calculateTarget({width:1920,height:1080},normalizeTemplate({scaleMode:'fraction',fraction:'100/1'}),()=>{}),/目标尺寸/);
+});
+test('短边缩放：横屏、竖屏、方形及奇数目标短边', () => {
+  const template=normalizeTemplate({scaleMode:'shortEdge',shortEdge:720});
+  assert.deepEqual(calculateTarget({width:1920,height:1080},template,()=>{}),{width:1280,height:720});
+  assert.deepEqual(calculateTarget({width:1080,height:1920},template,()=>{}),{width:720,height:1280});
+  assert.deepEqual(calculateTarget({width:1080,height:1080},template,()=>{}),{width:720,height:720});
+  const odd=normalizeTemplate({scaleMode:'shortEdge',shortEdge:719});
+  assert.equal(calculateTarget({width:1080,height:1920},odd,()=>{}).width,719);
+  for(const n of [0,1,-20,1.5,16385,'nope'])assert.throws(()=>normalizeTemplate({scaleMode:'shortEdge',shortEdge:n}),/目标短边/);
+});

@@ -1,0 +1,102 @@
+'use strict';
+const test=require('node:test');
+const assert=require('node:assert/strict');
+const fs=require('node:fs');
+const fsp=require('node:fs/promises');
+const os=require('node:os');
+const path=require('node:path');
+const {Manager,migrateLocalData,DATA_DIR}=require('../server');
+
+test('旧配置迁移到 .data，不覆盖新位置的已有设置',async t=>{
+  const root=await fsp.mkdtemp(path.join(os.tmpdir(),'manager-migration-'));
+  t.after(()=>fsp.rm(root,{recursive:true,force:true}));
+  const from=path.join(root,'old'),to=path.join(root,'.data');
+  await fsp.mkdir(from);
+  await fsp.writeFile(path.join(from,'.manager-config.json'),'{"source":"legacy"}');
+  await fsp.writeFile(path.join(from,'.manager-sessions.json'),'{"sessions":[]}');
+  migrateLocalData(from,to);
+  assert.equal(JSON.parse(await fsp.readFile(path.join(to,'.manager-config.json'),'utf8')).source,'legacy');
+  await fsp.writeFile(path.join(to,'.manager-config.json'),'{"source":"new"}');
+  migrateLocalData(from,to);
+  assert.equal(JSON.parse(await fsp.readFile(path.join(to,'.manager-config.json'),'utf8')).source,'new');
+  assert.ok(DATA_DIR.includes('ffmpeg-batch-tests-'));
+});
+
+test('两个会话的扫描/转码状态互相隔离，执行中允许创建、切换与停止其他任务',async t=>{
+  const temp=await fsp.mkdtemp(path.join(os.tmpdir(),'manager-concurrent-'));
+  t.after(()=>fsp.rm(temp,{recursive:true,force:true}));
+  const sourceA=path.join(temp,'a'),sourceB=path.join(temp,'b');
+  await fsp.mkdir(sourceA);await fsp.mkdir(sourceB);
+  const manager=new Manager();
+  manager.configure({source:sourceA,output:sourceA+'_out'});
+  const idA=manager.activeId,workerA=manager.current;
+  workerA.project.scanAt=new Date().toISOString();
+  workerA.project.tasks=[{id:'a',relative:'a.mp4',status:'pending',bytes:10}];
+  workerA.persist();
+  let unblock;
+  const gate=new Promise(resolve=>unblock=resolve);
+  workerA.transcodeOne=async task=>{
+    task.status='running';workerA.runningChild={pid:1234567};workerA.persist();
+    await gate;
+    task.status='done';workerA.runningChild=null;workerA.persist();
+  };
+  workerA.binaryReady=async()=>true;
+  const promiseA=manager.start();
+  // Wait for active encoder, without relying on FFmpeg speed.
+  for(let n=0;n<50 && workerA.project.tasks[0].status!=='running';n++)await new Promise(resolve=>setTimeout(resolve,20));
+  assert.equal(workerA.activity,'transcoding');
+  assert.equal(manager.snapshot().counts.running,1);
+  manager.configure({source:sourceB,output:sourceB+'_out'});
+  const idB=manager.activeId,workerB=manager.current;
+  assert.notEqual(idB,idA);
+  assert.equal(manager.activity,'idle');
+  workerB.project.scanAt=new Date().toISOString();
+  workerB.project.tasks=[{id:'b',relative:'b.mp4',status:'pending',bytes:11}];
+  workerB.persist();
+  let releaseB;
+  const gateB=new Promise(resolve=>releaseB=resolve);
+  workerB.transcodeOne=async task=>{task.status='running';workerB.runningChild={pid:2222};workerB.persist();await gateB;task.status='done';workerB.runningChild=null;workerB.persist();};
+  workerB.binaryReady=async()=>true;
+  const promiseB=manager.start();
+  for(let n=0;n<50 && workerB.project.tasks[0].status!=='running';n++)await new Promise(resolve=>setTimeout(resolve,20));
+  assert.equal(manager.activity,'transcoding');
+  assert.equal(workerA.activity,'transcoding');
+  assert.equal(manager.listSessions().find(x=>x.id===idA).running,1);
+  assert.equal(manager.listSessions().find(x=>x.id===idB).running,1);
+  manager.selectSession(idA);
+  assert.equal(manager.snapshot().counts.running,1);
+  manager.pause();
+  assert.equal(workerA.shouldPause,true);
+  assert.equal(workerB.shouldPause,false);
+  manager.selectSession(idB);
+  assert.equal(workerB.shouldPause,false);
+  releaseB();await promiseB;
+  assert.equal(workerB.project.tasks[0].status,'done');
+  assert.equal(workerA.project.tasks[0].status,'running');
+  unblock();await promiseA;
+  manager.selectSession(idA);
+  assert.equal(manager.snapshot().counts.done,1);
+  assert.equal(manager.snapshot().counts.running,0);
+  assert.equal(manager.listSessions().find(x=>x.id===idB).done,1);
+  // A second manager recovers both sessions from the persisted index.
+  const reopened=new Manager();
+  assert.equal(reopened.listSessions().length>=2,true);
+  reopened.selectSession(idA);
+  assert.equal(reopened.snapshot().counts.done,1);
+  reopened.selectSession(idB);
+  assert.equal(reopened.snapshot().counts.done,1);
+});
+
+test('执行中切换不触发运行 worker 的项目重新加载',async t=>{
+  const tmp=await fsp.mkdtemp(path.join(os.tmpdir(),'manager-select-'));
+  t.after(()=>fsp.rm(tmp,{recursive:true,force:true}));
+  const mgr=new Manager();
+  const source=path.join(tmp,'videos');await fsp.mkdir(source);
+  mgr.configure({source,output:source+'_out'});
+  const id=mgr.activeId,reference=mgr.current.project;
+  mgr.current.activity='verifying';
+  mgr.selectSession(id);
+  assert.strictEqual(mgr.current.project,reference);
+  assert.equal(mgr.activity,'verifying');
+  mgr.current.activity='idle';
+});
