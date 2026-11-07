@@ -1,12 +1,14 @@
 {
   "name": "h265-720p-manager",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "private": true,
-  "description": "本地 FFmpeg H.265/720p 批量转码与验收管理器",
+  "description": "本地 FFmpeg 批量转码、历史任务、双视频预览与验收管理器",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "test": "node --test"
+    "test": "node --test --test-concurrency=1",
+    "test:integration": "node --test test/integration.test.js",
+    "check:syntax": "node --check server.js && node --check workflow.js && node --check public/app.js && node --check public/workspace-ui.js && node --check public/tree-stats.js"
   },
   "engines": {
     "node": ">=18"

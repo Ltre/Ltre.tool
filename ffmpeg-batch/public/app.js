@@ -10,6 +10,10 @@ let collapsedAll = false;
 let activeModalDir = '';
 let lastProjectKey = '';
 let toastTimer = null;
+let draftSession = false;
+let lastTemplateKey = '';
+let currentEditTask = null;
+let currentCompareTask = null;
 const mapStatus = { pending: '待处理', running: '转码中', done: '已完成', failed: '失败', interrupted: '已中断', probe_failed: '探测失败', conflict: '目标冲突' };
 function toast(message) {
   const el = $('toast'); el.textContent = message; el.classList.add('visible');
@@ -45,12 +49,14 @@ async function request(url, data) {
   return result;
 }
 async function action(endpoint, body = {}) {
-  try { await request(endpoint, body); await refresh(); }
-  catch (e) { toast(e.message); }
+  try { await request(endpoint, body); await refresh(); return true; }
+  catch (e) { toast(e.message); return false; }
 }
 function enableControls(s) {
   const idle = s.activity === 'idle'; const trans = s.activity === 'transcoding';
   for (const id of ['configure','scan','retry','verify','verify-deep']) $(id).disabled = !idle;
+  $('new-task').disabled = !idle;
+  $('save-template').disabled = !idle || !s.configured || draftSession;
   $('start').disabled = !idle || !s.scannedAt;
   $('pause').disabled = !trans || s.shouldPause;
   $('stop').disabled = !trans;
@@ -78,7 +84,7 @@ function renderSummary(s) {
   const badge = $('activity-badge');
   badge.className = 'activity' + (s.activity === 'transcoding' ? ' running' : '');
   badge.textContent = ({ idle: '空闲', scanning: 'ffprobe 扫描', transcoding: '正在转码', preparing: '检查 FFmpeg', verifying: '正在验收' })[s.activity] || s.activity;
-  setText('setup-msg', s.configured ? `已保存任务状态：${s.output}` : '尚未配置项目');
+  setText('setup-msg', draftSession ? '正在创建新任务：应用目录后独立保存，旧任务不受影响' : s.configured ? `任务状态目录：${s.output}` : '尚未配置任务');
   enableControls(s);
 }
 function shouldShow(t, filter) {
@@ -99,11 +105,11 @@ function buildTree(tasks) {
   }
   return root;
 }
-function statNode(node) {
-  let count = node.files.length;
-  for (const sub of node.dirs.values()) count += statNode(sub);
-  node.count = count;
-  return count;
+function fullStats(tasks) {
+  const root = buildTree(tasks);
+  const stats = new Map();
+  VideoTreeStats.summarize(root, stats);
+  return stats;
 }
 function nameBox(icon, text, isFolder) {
   const wrap = el('span');
@@ -116,8 +122,9 @@ function renderFolder(parent, node, depth) {
   const div = el('div', 'folder');
   const hdr = el('button', 'folder-head'); hdr.type = 'button'; hdr.style.paddingLeft = (12+depth*18)+'px';
   const left = nameBox(node.name, node.id, true);
-  left.append(el('span', 'folder-count', `${node.count} 文件`));
-  hdr.append(left, el('span'), el('span'), el('span'));
+  const stats = node.stats || {total:0, done:0, problems:0, running:0};
+  left.append(el('span', 'folder-count', `${stats.total} 个`));
+  hdr.append(left, el('span', 'folder-stats', `已完成 ${stats.done} · 异常/中断 ${stats.problems} · 转码中 ${stats.running} · 总计 ${stats.total}`));
   const closed = closedDirs.has(node.id);
   hdr.firstChild.firstChild.textContent = closed ? '▸' : '▾';
   hdr.addEventListener('click', () => { if (closedDirs.has(node.id)) closedDirs.delete(node.id); else closedDirs.add(node.id); renderTree(model); });
@@ -148,6 +155,15 @@ function renderFile(parent, t, depth) {
       detailRow('源视频时长', fmtDuration(t.duration)), detailRow('任务', `${mapStatus[t.status] || t.status} · 重试次数 ${t.attempts || 0} · ${t.speed || ''}`));
     if (t.status === 'done') meta.append(detailRow('完成输出', `${fmtBytes(t.outputBytes)} · 最近验收 ${t.verifiedAt ? new Date(t.verifiedAt).toLocaleString() : '未记录'}`));
     info.append(meta);
+    const tools = el('div','file-tools');
+    const editBtn = el('button','secondary','单独设置转码参数');
+    editBtn.type='button'; editBtn.disabled = model.activity !== 'idle';
+    editBtn.addEventListener('click', () => openFileTemplate(t)); tools.append(editBtn);
+    if (t.status === 'done') {
+      const compare = el('button','secondary','原视频 / 结果视频对比');
+      compare.type='button'; compare.addEventListener('click', () => openCompare(t)); tools.append(compare);
+    }
+    info.append(tools);
     if (t.command) {
       const title = el('div','cmd-title'); title.append(el('b','', 'FFmpeg 实际执行命令'));
       const copy = el('button','secondary','复制命令'); copy.addEventListener('click', async () => { try { await navigator.clipboard.writeText(t.command); toast('命令已复制'); } catch { toast('复制失败，请手动选择命令'); } });
@@ -168,7 +184,9 @@ function renderTree(s) {
   const container=$('tree'); container.replaceChildren();
   const filtered = s.tasks.filter(t => shouldShow(t,$('filter').value));
   if (!filtered.length) { container.append(el('div','empty', s.activity === 'scanning' ? `正在探测文件 ${s.scanProgress.done}/${s.scanProgress.total}…` : '没有符合当前筛选条件的视频')); return; }
-  const tree=buildTree(filtered); statNode(tree); renderNode(container,tree,0);
+  const tree=buildTree(filtered); const statMap = fullStats(s.tasks);
+  const attach = node => {node.stats = statMap.get(node.id); for (const child of node.dirs.values()) attach(child);};
+  attach(tree); renderNode(container,tree,0);
 }
 async function refresh() {
   if (busy) return;
@@ -176,14 +194,15 @@ async function refresh() {
   try {
     const s=await request('/api/status');
     setText('connection','已连接');
-    const projectKey=s.source+'|'+s.output;
-    if (projectKey !== lastProjectKey) {
+    const projectKey=s.id || '';
+    if (projectKey !== lastProjectKey && !draftSession) {
       lastProjectKey=projectKey;
       $('source').value=s.source; $('output').value=s.output || defaultOut(s.source);
       sourceEdited=!!s.source; outputEdited=!!s.output;
       closedDirs.clear(); openedFiles.clear();
+      setTemplateForm('tpl', s.template);
     }
-    model=s; renderSummary(s); renderTree(s);
+    model=s; renderSummary(s); renderSessions(s); renderTree(s);
   } catch (e) { setText('connection','连接断开'); }
   finally { busy=false; }
 }
@@ -191,8 +210,14 @@ function updateOutputFromSource() { if (!outputEdited) $('output').value=default
 $('source').addEventListener('input', () => { sourceEdited=true; updateOutputFromSource(); });
 $('output').addEventListener('input', () => { outputEdited=true; });
 $('default-output').addEventListener('click', () => { $('output').value=defaultOut($('source').value.trim()); outputEdited=false; });
-$('configure').addEventListener('click', () => action('/api/config', {source:$('source').value.trim(),output:$('output').value.trim()}));
-$('scan').addEventListener('click', () => action('/api/scan'));
+$('configure').addEventListener('click', async () => {
+  const ok = await action('/api/config', {source:$('source').value.trim(),output:$('output').value.trim()});
+  if (ok) {draftSession = false; await refresh();}
+});
+$('scan').addEventListener('click', async () => {
+  const ok = await action('/api/scan', {source:$('source').value.trim(),output:$('output').value.trim()});
+  if (ok) {draftSession = false; await refresh();}
+});
 $('start').addEventListener('click', () => action('/api/start'));
 $('pause').addEventListener('click', () => action('/api/pause'));
 $('stop').addEventListener('click', () => { if (confirm('立即终止当前视频转码？未完成文件保留为 .partial，重试时会删除并从头转码。')) action('/api/stop'); });

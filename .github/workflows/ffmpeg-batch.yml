@@ -1,0 +1,26 @@
+name: FFmpeg batch regression
+on:
+  push:
+    branches: [dev/2611-s1-Q1]
+    paths:
+      - "ffmpeg-batch/**"
+      - ".github/workflows/ffmpeg-batch.yml"
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Environment checks
+        run: |
+          node --version
+          ffmpeg -version
+          ffprobe -version
+      - name: Syntax and automated tests
+        working-directory: ffmpeg-batch
+        run: |
+          npm run check:syntax
+          npm test

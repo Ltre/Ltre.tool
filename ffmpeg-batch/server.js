@@ -221,7 +221,7 @@ class Manager {
   saveTemplate(template) {
     if (!this.project) throw new Error('请先创建任务');
     if (this.activity !== 'idle') throw new Error('处理期间不可修改模板');
-    this.project.template = workflow.normalizeTemplate(template, false);
+    this.project.template = workflow.normalizeTemplate(template, false, true);
     for (const t of this.project.tasks) this.refreshTemplate(t);
     this.persist(); this.note = '已保存当前任务的批量转码模板';
   }
@@ -230,7 +230,7 @@ class Manager {
     if (this.activity !== 'idle') throw new Error('处理期间不可修改模板');
     const t = this.project.tasks.find(t => t.id === id);
     if (!t) throw new Error('未找到该视频');
-    t.override = override == null ? null : workflow.normalizeTemplate(override, true);
+    t.override = override == null ? null : workflow.normalizeTemplate(override, true, true);
     this.refreshTemplate(t); this.persist();
     this.note = '已更新该视频的转码模板';
   }
