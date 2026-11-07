@@ -1,0 +1,4 @@
+# 运行时会话索引（不提交用户本机视频路径与记录）
+/.manager-sessions.json
+/*.writing
+/node_modules/

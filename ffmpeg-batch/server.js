@@ -8,9 +8,12 @@ const http = require('node:http');
 const os = require('node:os');
 const { spawn } = require('node:child_process');
 const { URL } = require('node:url');
+const { randomUUID } = require('node:crypto');
+const workflow = require('./workflow');
 
 const APP_DIR = __dirname;
 const CONFIG_FILE = path.join(APP_DIR, '.manager-config.json');
+const REGISTRY_FILE = path.join(APP_DIR, '.manager-sessions.json');
 const STATE_FILE = '.h265-720p-state.json';
 const PORT = Number(process.env.PORT || 4008);
 const BIND = '127.0.0.1'; // never expose file-system browsing to the LAN
@@ -94,7 +97,8 @@ async function checkOutput(task) {
   const st = await fsp.stat(task.output).catch(() => null);
   if (!st || !st.isFile() || st.size <= 0) throw new Error('输出文件不存在或大小为 0');
   const actual = await probe(task.output);
-  if (actual.codec !== 'hevc') throw new Error(`视频编码不是 HEVC，而是 ${actual.codec}`);
+  const expected = workflow.expectedCodec(task);
+  if (expected && actual.codec !== expected) throw new Error(`视频编码不是 ${expected}，而是 ${actual.codec}`);
   if (actual.width !== task.targetWidth || actual.height !== task.targetHeight) {
     throw new Error(`输出尺寸 ${actual.width}×${actual.height}，期望 ${task.targetWidth}×${task.targetHeight}`);
   }
@@ -128,8 +132,8 @@ function temporaryOutput(final) {
   return `${final.slice(0, -ext.length)}.partial${ext}`;
 }
 function commandFor(task) {
-  const args = ['-i', task.input, '-c:v', 'libx265', '-movflags', '+faststart', '-vf', `scale=${task.targetWidth}:${task.targetHeight}`, '-c:a', 'copy', task.temporary];
-  return { args, display: `ffmpeg -i ${shellQuote(task.input)} -c:v libx265 -movflags +faststart -vf scale=${task.targetWidth}:${task.targetHeight} -c:a copy ${shellQuote(task.temporary)}` };
+  const args = workflow.commandArgs(task);
+  return { args, display: 'ffmpeg ' + args.map(shellQuote).join(' ') };
 }
 function parseTime(s) { const m = /time=\s*(\d+):(\d+):(\d+(?:\.\d+)?)/g; let x, last; while ((x = m.exec(s))) last = x; return last ? Number(last[1]) * 3600 + Number(last[2]) * 60 + Number(last[3]) : null; }
 
@@ -142,27 +146,94 @@ class Manager {
     this.shouldPause = false;
     this.runningChild = null;
     this.stopRequested = false;
+    const registry = readJson(REGISTRY_FILE);
+    this.sessions = Array.isArray(registry?.sessions) ? registry.sessions : [];
+    this.activeId = null;
+    const selected = this.sessions.find(s => s.id === registry?.activeId) || this.sessions[0];
     const config = readJson(CONFIG_FILE);
-    if (config?.source && config?.output) {
-      try { ensureSibling(config.source, config.output); this.openProject(config.source, config.output); }
-      catch (e) { this.note = `无法恢复上次项目：${readableError(e)}`; }
+    const candidate = selected || (config?.source && config?.output ? config : null);
+    if (candidate) {
+      try {
+        ensureSibling(candidate.source, candidate.output);
+        if (!fs.existsSync(candidate.source)) throw new Error('源目录当前不存在');
+        this.openProject(candidate.source, candidate.output);
+      } catch (e) { this.note = `无法恢复上次任务：${readableError(e)}`; }
     }
   }
   get stateFile() { return this.project ? path.join(this.project.output, STATE_FILE) : null; }
   openProject(source, output) {
     const old = readJson(path.join(output, STATE_FILE));
     if (old && (old.source !== source || old.output !== output)) {
-      throw new Error('目标目录已有属于其他源目录的转码任务状态，请换一个孪生目录，避免混用输出文件');
+      throw new Error('输出目录已经属于其他任务，不能复用');
+    }
+    let session = this.sessions.find(s => s.source === source && s.output === output);
+    if (!session) {
+      session = { id: old?.id || randomUUID(), source, output, createdAt: old?.createdAt || now() };
+      this.sessions.unshift(session);
     }
     this.project = old && old.source === source && old.output === output
-      ? old : { version: 1, source, output, createdAt: now(), scanAt: null, tasks: [], scanErrors: [] };
+      ? old : { version: 2, id: session.id, source, output, createdAt: now(), scanAt: null, template: {...workflow.EMPTY}, tasks: [], scanErrors: [] };
+    this.project.id = session.id;
+    if (!this.project.template) this.project.template = {...workflow.LEGACY};
     for (const t of this.project.tasks) {
+      if (!t.template) t.template = {...workflow.LEGACY};
       if (t.status === 'running') { t.status = 'interrupted'; t.error = '上次进程中断；可重新开始（会清理残留的 .partial 文件）'; t.pid = null; }
     }
-    this.persist();
+    this.activeId = session.id;
+    this.persist(); this.persistRegistry();
     atomicJson(CONFIG_FILE, { source, output });
   }
   persist() { if (this.project) atomicJson(this.stateFile, this.project); }
+  persistRegistry() { atomicJson(REGISTRY_FILE, {version: 1, activeId: this.activeId, sessions: this.sessions}); }
+  selectSession(id) {
+    if (this.activity !== 'idle') throw new Error('当前有任务正在执行，不能切换');
+    const session = this.sessions.find(s => s.id === id);
+    if (!session) throw new Error('任务不存在');
+    this.openProject(session.source, session.output);
+    this.note = '已切换到历史任务';
+  }
+  listSessions() {
+    return this.sessions.map(s => {
+      const data = s.id === this.activeId ? this.project : readJson(path.join(s.output, STATE_FILE));
+      const tasks = data?.tasks || [];
+      return {...s, total: tasks.length, done: tasks.filter(t => t.status === 'done').length,
+        failed: tasks.filter(t => ['failed','probe_failed','conflict','interrupted'].includes(t.status)).length,
+        scannedAt: data?.scanAt || null};
+    });
+  }
+  refreshTemplate(t) {
+    if (!(t.width > 0 && t.height > 0)) return;
+    const template = workflow.effectiveTemplate(this.project, t);
+    const key = JSON.stringify(template);
+    const oldKey = t.templateKey || JSON.stringify(t.template || workflow.LEGACY);
+    const changed = key !== oldKey;
+    const target = workflow.calculateTarget(t, template, targetSize);
+    t.template = template; t.templateKey = key;
+    t.targetWidth = target.width; t.targetHeight = target.height;
+    t.command = commandFor(t).display;
+    if (changed) {
+      t.progress = 0; t.verifiedAt = null; t.outputBytes = null;
+      if (t.status === 'done' || t.status === 'conflict') {
+        t.status = 'conflict'; t.error = '转码模板已变更，原有输出文件不会被覆盖；请移走旧输出文件再重试，或创建新任务并指定新输出目录';
+      } else if (t.status !== 'probe_failed') {t.status = 'pending'; t.error = '';}
+    }
+  }
+  saveTemplate(template) {
+    if (!this.project) throw new Error('请先创建任务');
+    if (this.activity !== 'idle') throw new Error('处理期间不可修改模板');
+    this.project.template = workflow.normalizeTemplate(template, false);
+    for (const t of this.project.tasks) this.refreshTemplate(t);
+    this.persist(); this.note = '已保存当前任务的批量转码模板';
+  }
+  saveItemTemplate(id, override) {
+    if (!this.project) throw new Error('请先创建任务');
+    if (this.activity !== 'idle') throw new Error('处理期间不可修改模板');
+    const t = this.project.tasks.find(t => t.id === id);
+    if (!t) throw new Error('未找到该视频');
+    t.override = override == null ? null : workflow.normalizeTemplate(override, true);
+    this.refreshTemplate(t); this.persist();
+    this.note = '已更新该视频的转码模板';
+  }
   configure(input) {
     if (this.activity !== 'idle') throw new Error('扫描、转码或验收进行中，不能切换项目');
     const source = path.resolve(String(input.source || '').trim());
@@ -190,7 +261,7 @@ class Manager {
     const counts = { total: tasks.length, pending: 0, running: 0, done: 0, failed: 0, interrupted: 0, probe_failed: 0, conflict: 0 };
     let sourceBytes = 0, outputBytes = 0;
     for (const t of tasks) { counts[t.status] = (counts[t.status] || 0) + 1; sourceBytes += t.bytes || 0; if (t.status === 'done') outputBytes += t.outputBytes || 0; }
-    return { configured: !!this.project, source: this.project?.source || '', output: this.project?.output || '',
+    return { configured: !!this.project, id: this.activeId, sessions: this.listSessions(), template: this.project?.template || workflow.EMPTY, source: this.project?.source || '', output: this.project?.output || '',
       activity: this.activity, shouldPause: this.shouldPause, note: this.note,
       scannedAt: this.project?.scanAt || null, scanProgress: this.scanProgress,
       scanErrors: this.project?.scanErrors || [], counts, sourceBytes, outputBytes, tasks };
@@ -232,9 +303,12 @@ class Manager {
             stat = await fsp.stat(filename);
             const st = stat;
             const meta = await probe(filename);
-            const target = targetSize(meta.width, meta.height);
+            const template = workflow.effectiveTemplate(this.project, old);
+            const target = workflow.calculateTarget(meta, template, targetSize);
+            const templateKey = JSON.stringify(template);
             const unchanged = !!old && old.bytes === st.size && old.mtimeMs === st.mtimeMs && old.output === output
-              && old.targetWidth === target.width && old.targetHeight === target.height;
+              && old.targetWidth === target.width && old.targetHeight === target.height
+              && (old.templateKey || JSON.stringify(old.template || workflow.LEGACY)) === templateKey;
             const oldStatus = unchanged ? old.status : 'pending';
             let status = oldStatus === 'running' ? 'interrupted' : oldStatus;
             if (status === 'done' && !fileExists(output)) status = 'pending';
@@ -242,6 +316,7 @@ class Manager {
               id: idForTask(relative), relative, input: filename, output, temporary: temporaryOutput(output),
               bytes: st.size, mtimeMs: st.mtimeMs, width: meta.width, height: meta.height,
               rotation: meta.rotation, targetWidth: target.width, targetHeight: target.height,
+              template, templateKey, override: old?.override || null,
               sourceCodec: meta.codec, audioCodec: meta.audioCodec, duration: meta.duration,
               status: status === 'probe_failed' ? 'pending' : status,
               error: unchanged && status !== 'pending' ? (old.error || '') : '',
@@ -387,7 +462,7 @@ class Manager {
   exportCommands() {
     if (!this.project) throw new Error('未配置项目');
     const lines = [`源目录：${this.project.source}`, `孪生输出目录：${this.project.output}`, `扫描时间：${this.project.scanAt || '未扫描'}`, `规则：ffmpeg -i 输入 -c:v libx265 -movflags +faststart -vf scale=宽:高 -c:a copy 输出`, '',
-      '说明：输出先写入 *.partial.<扩展名>；ffprobe 验收通过后原子重命名到最终路径。', ''];
+      '说明：转码参数以各文件实际命令为准；输出先写入 *.partial.<扩展名>，验收后原子重命名。', ''];
     let currentDir = null;
     for (const t of this.project.tasks) {
       const dir = path.posix.dirname(t.relative);
@@ -435,6 +510,10 @@ const server = http.createServer(async (req, res) => {
   try {
     const url = new URL(req.url || '/', `http://${BIND}:${PORT}`);
     if (req.method === 'GET' && url.pathname === '/api/status') return json(res, 200, manager.snapshot());
+    if ((req.method === 'GET' || req.method === 'HEAD') && url.pathname === '/api/video') {
+      if (req.headers['sec-fetch-site'] === 'cross-site') return json(res, 403, {error: '禁止跨站预览'});
+      return workflow.serveVideo(req, res, url, manager.project);
+    }
     if (req.method === 'GET' && url.pathname === '/api/directories') return json(res, 200, await directories(url.searchParams.get('path')));
     if (req.method === 'GET' && url.pathname === '/api/export/commands') return textFile(res, 'ffmpeg-commands.txt', manager.exportCommands(), 'text/plain; charset=utf-8');
     if (req.method === 'GET' && url.pathname === '/api/export/report.csv') return textFile(res, 'h265-720p-report.csv', manager.exportCsv(), 'text/csv; charset=utf-8');
@@ -448,7 +527,17 @@ const server = http.createServer(async (req, res) => {
       const body = raw ? JSON.parse(raw) : {};
       switch (url.pathname) {
         case '/api/config': manager.configure(body); break;
-        case '/api/scan': if (manager.activity !== 'idle') throw new Error('已有操作在执行'); void manager.scan(); break;
+        case '/api/sessions/select': manager.selectSession(body.id); break;
+        case '/api/template': manager.saveTemplate(body); break;
+        case '/api/template/item': manager.saveItemTemplate(body.id, body.override); break;
+        case '/api/scan':
+          if (manager.activity !== 'idle') throw new Error('已有操作在执行');
+          // Typed but un-applied paths are applied before starting ffprobe.
+          if (body.source && (path.resolve(body.source) !== manager.project?.source ||
+            (body.output && path.resolve(body.output) !== manager.project?.output))) manager.configure(body);
+          if (!manager.project) throw new Error('请先填写并应用源视频目录');
+          void manager.scan().catch(e => {manager.activity = 'idle'; manager.note = '扫描失败：' + readableError(e);});
+          break;
         case '/api/start': if (manager.activity !== 'idle') throw new Error('已有操作在执行'); void manager.start().catch(e => { manager.activity = 'idle'; manager.note = readableError(e); }); break;
         case '/api/pause': manager.pause(); break;
         case '/api/stop': manager.stop(); break;
@@ -485,4 +574,4 @@ if (require.main === module) {
   process.on('SIGINT', close);
   process.on('SIGTERM', close);
 }
-module.exports = { Manager, targetSize, extractMeta, outRelName, commandFor, checkOutput, server };
+module.exports = { Manager, targetSize, extractMeta, outRelName, commandFor, checkOutput, server, manager };

@@ -1,0 +1,110 @@
+'use strict';
+const fs = require('node:fs');
+const fsp = require('node:fs/promises');
+const path = require('node:path');
+
+const LEGACY = Object.freeze({videoCodec: 'libx265', scaleMode: 'fit720', percent: 100, crf: ''});
+const EMPTY = Object.freeze({videoCodec: '', scaleMode: 'none', percent: 100, crf: ''});
+function normalizeTemplate(input = {}, allowExact = false, allowLegacy = false) {
+  if (input == null || typeof input !== 'object' || Array.isArray(input)) throw new Error('模板必须是对象');
+  const videoCodec = String(input.videoCodec ?? '').trim();
+  if (videoCodec && !/^[a-zA-Z0-9_.-]{1,64}$/.test(videoCodec)) throw new Error('视频编码器名称不合法');
+  const scaleMode = String(input.scaleMode ?? 'none');
+  if (!['none', 'percent', ...(allowExact ? ['exact'] : []), ...(allowLegacy ? ['fit720'] : [])].includes(scaleMode)) throw new Error('不支持的缩放模式');
+  const percent = Number(input.percent ?? 100);
+  if (!Number.isFinite(percent) || percent < 1 || percent > 1000) throw new Error('缩放比例必须在 1%～1000% 之间');
+  const crf = input.crf == null || String(input.crf).trim() === '' ? '' : String(input.crf).trim();
+  if (crf && (!/^(?:\d+(?:\.\d+)?)$/.test(crf) || Number(crf) > 63)) throw new Error('CRF 必须为 0～63 之间的数值');
+  const result = {videoCodec, scaleMode, percent, crf};
+  if (scaleMode === 'exact') {
+    const width = Number(input.width), height = Number(input.height);
+    if (!Number.isSafeInteger(width) || !Number.isSafeInteger(height) || width < 2 || height < 2 || width > 16384 || height > 16384) {
+      throw new Error('指定尺寸必须是 2～16384 的整数');
+    }
+    result.width = width; result.height = height;
+  }
+  if (videoCodec === 'copy' && scaleMode !== 'none') throw new Error('视频流复制无法同时使用缩放滤镜');
+  return result;
+}
+function effectiveTemplate(project, task) {
+  return normalizeTemplate(task?.override || project?.template || EMPTY, true, true);
+}
+function calculateTarget(meta, template, fit720) {
+  if (!(meta.width > 0 && meta.height > 0)) throw new Error('无效源分辨率');
+  switch (template.scaleMode) {
+    case 'fit720': return fit720(meta.width, meta.height);
+    case 'exact': return {width: template.width, height: template.height};
+    case 'percent': {
+      const even = value => Math.max(2, Math.round(value / 2) * 2);
+      return {width: even(meta.width * template.percent / 100), height: even(meta.height * template.percent / 100)};
+    }
+    default: return {width: meta.width, height: meta.height};
+  }
+}
+function commandArgs(t) {
+  const template = normalizeTemplate(t.template || LEGACY, true, true);
+  const args = ['-i', t.input];
+  if (template.videoCodec) args.push('-c:v', template.videoCodec);
+  args.push('-movflags', '+faststart');
+  if (template.scaleMode !== 'none') args.push('-vf', `scale=${t.targetWidth}:${t.targetHeight}`);
+  if (template.crf) args.push('-crf', template.crf);
+  args.push('-c:a', 'copy', t.temporary);
+  return args;
+}
+function expectedCodec(t) {
+  const codec = (t.template || LEGACY).videoCodec;
+  return ({libx265: 'hevc', hevc_nvenc: 'hevc', libx264: 'h264', h264_nvenc: 'h264', libsvtav1: 'av1', libaom_av1: 'av1', libvpx_vp9: 'vp9'})[codec] || (codec === 'copy' ? t.sourceCodec : null);
+}
+function within(root, file) {
+  const relative = path.relative(root, file);
+  return relative !== '' && relative !== '..' && !relative.startsWith('..' + path.sep) && !path.isAbsolute(relative);
+}
+const TYPES = {'.mp4':'video/mp4','.m4v':'video/mp4','.mov':'video/quicktime','.webm':'video/webm','.mkv':'video/x-matroska','.avi':'video/x-msvideo','.ts':'video/mp2t','.m2ts':'video/mp2t','.mts':'video/mp2t','.wmv':'video/x-ms-wmv','.flv':'video/x-flv','.mpeg':'video/mpeg','.mpg':'video/mpeg','.3gp':'video/3gpp','.vob':'video/mpeg'};
+async function serveVideo(req, res, url, project) {
+  const side = url.searchParams.get('side');
+  const id = url.searchParams.get('id');
+  const task = project?.tasks?.find(t => t.id === id);
+  if (!task || !['source','output'].includes(side) || (side === 'output' && task.status !== 'done')) {
+    res.writeHead(404); res.end('Not found'); return;
+  }
+  const root = side === 'source' ? project.source : project.output;
+  const requested = side === 'source' ? task.input : task.output;
+  let realRoot, realFile, stat;
+  try {
+    realRoot = await fsp.realpath(root);
+    realFile = await fsp.realpath(requested);
+    if (!within(realRoot, realFile)) throw new Error('Path escapes task root');
+    stat = await fsp.stat(realFile);
+    if (!stat.isFile() || stat.size === 0) throw new Error('Not a video');
+  } catch {
+    res.writeHead(404); res.end('Not found'); return;
+  }
+  const rawRange = req.headers.range;
+  let start = 0, end = stat.size - 1, partial = false;
+  if (rawRange) {
+    const match = /^bytes=(\d*)-(\d*)$/.exec(rawRange);
+    if (!match || (!match[1] && !match[2])) {
+      res.writeHead(416, {'content-range': `bytes */${stat.size}`}); res.end(); return;
+    }
+    if (match[1]) {
+      start = Number(match[1]); end = match[2] ? Number(match[2]) : end;
+    } else {
+      const length = Number(match[2]); start = Math.max(0, stat.size - length);
+    }
+    if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end) || start < 0 || end < start || start >= stat.size) {
+      res.writeHead(416, {'content-range': `bytes */${stat.size}`}); res.end(); return;
+    }
+    end = Math.min(end, stat.size - 1); partial = true;
+  }
+  const headers = {'content-type': TYPES[path.extname(realFile).toLowerCase()] || 'application/octet-stream',
+    'content-length': end - start + 1, 'accept-ranges':'bytes', 'cache-control':'no-store',
+    'x-content-type-options':'nosniff', 'content-disposition':'inline'};
+  if (partial) headers['content-range'] = `bytes ${start}-${end}/${stat.size}`;
+  res.writeHead(partial ? 206 : 200, headers);
+  if (req.method === 'HEAD') {res.end(); return;}
+  const stream = fs.createReadStream(realFile, {start,end});
+  stream.on('error', () => res.destroy());
+  res.on('close', () => stream.destroy());
+  stream.pipe(res);
+}
+module.exports = {LEGACY, EMPTY, normalizeTemplate, effectiveTemplate, calculateTarget, commandArgs, expectedCodec, serveVideo, within};
