@@ -89,7 +89,9 @@ async function serveVideo(req, res, url, project) {
     if (match[1]) {
       start = Number(match[1]); end = match[2] ? Number(match[2]) : end;
     } else {
-      const length = Number(match[2]); start = Math.max(0, stat.size - length);
+      const length = Number(match[2]);
+      if (length <= 0) {res.writeHead(416, {'content-range': `bytes */${stat.size}`}); res.end(); return;}
+      start = Math.max(0, stat.size - length);
     }
     if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end) || start < 0 || end < start || start >= stat.size) {
       res.writeHead(416, {'content-range': `bytes */${stat.size}`}); res.end(); return;

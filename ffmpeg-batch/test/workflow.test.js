@@ -60,6 +60,7 @@ test('视频预览：Range、HEAD、无效范围、未完成输出和符号链�
   assert.equal(r.status,206);assert.equal(r.headers.get('content-range'),'bytes 5-14/4096');assert.equal((await r.arrayBuffer()).byteLength,10);
   r=await fetch(url+'source',{method:'HEAD'});assert.equal(r.status,200);assert.equal(r.headers.get('accept-ranges'),'bytes');
   r=await fetch(url+'source',{headers:{Range:'bytes=9999-'}});assert.equal(r.status,416);
+  r=await fetch(url+'source',{headers:{Range:'bytes=-0'}});assert.equal(r.status,416);
   task.status='pending';r=await fetch(url+'output');assert.equal(r.status,404);
   const outside=path.join(dir,'outside.mp4');await writeFile(outside,body);
   await rm(input);await symlink(outside,input);
