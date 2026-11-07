@@ -29,6 +29,16 @@ test('HTTP: 未应用目录直接扫描、模板覆盖、实际转码、历史�
   assert.equal(s.tasks[0].targetWidth,160);assert.equal(s.tasks[0].targetHeight,90);
   assert.ok(!s.tasks[0].command.includes('-c:v'));
   const firstId=s.id, fileId=s.tasks[0].id;
+  r=await api('/api/template',{videoCodec:'libx264',scaleMode:'fraction',fraction:'720/1080'});
+  assert.equal(r.status,200);
+  s=await status();
+  assert.equal(s.template.fraction,'2/3');
+  assert.equal(s.tasks[0].targetWidth,106);
+  assert.equal(s.tasks[0].targetHeight,60);
+  r=await api('/api/template',{videoCodec:'libx264',scaleMode:'shortEdge',shortEdge:72});
+  assert.equal(r.status,200);
+  s=await status();assert.equal(s.tasks[0].targetWidth,128);assert.equal(s.tasks[0].targetHeight,72);
+
   r=await api('/api/template',{videoCodec:'libx264',scaleMode:'percent',percent:80,crf:'23'});assert.equal(r.status,200);
   s=await status();assert.equal(s.tasks[0].targetWidth,128);assert.equal(s.tasks[0].targetHeight,72);
   assert.match(s.tasks[0].command,/\-c:v/);assert.match(s.tasks[0].command,/\-crf/);
@@ -46,6 +56,13 @@ test('HTTP: 未应用目录直接扫描、模板覆盖、实际转码、历史�
   const source2=path.join(root,'source2'),output2=source2+'_h265_720p';await mkdir(source2);
   r=await api('/api/config',{source:source2,output:output2});assert.equal(r.status,200);
   s=await status();assert.notEqual(s.id,firstId);assert.equal(s.sessions.length>=2,true);
+  // Preview remains pinned to its original session after the UI selects another.
+  let pinned=await fetch(origin+'/api/video?side=output&session='+encodeURIComponent(firstId)+'&id='+encodeURIComponent(fileId),{headers:{Range:'bytes=0-31'}});
+  assert.equal(pinned.status,206);
+  assert.equal((await pinned.arrayBuffer()).byteLength,32);
+  pinned=await fetch(origin+'/api/video?side=output&id='+encodeURIComponent(fileId));
+  assert.equal(pinned.status,404);
+
   r=await api('/api/sessions/select',{id:firstId});assert.equal(r.status,200);
   s=await status();assert.equal(s.id,firstId);assert.equal(s.tasks[0].status,'done');
   assert.equal(s.tasks[0].targetWidth,120);

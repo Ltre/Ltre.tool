@@ -1,4 +1,6 @@
-# 运行时会话索引（不提交用户本机视频路径与记录）
+# 本地运行状态与历史数据，不纳入版本控制
+/.data/
+/.manager-config.json
 /.manager-sessions.json
 /*.writing
 /node_modules/

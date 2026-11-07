@@ -7,6 +7,8 @@ function setTemplateForm(prefix, template = {}) {
   $(prefix+'-scale').value = template.scaleMode || 'none';
   $(prefix+'-percent').value = template.percent ?? 100;
   $(prefix+'-crf').value = template.crf ?? '';
+  $(prefix+'-fraction').value = template.fraction ?? '2/3';
+  $(prefix+'-short-edge').value = template.shortEdge ?? 720;
   if ($(prefix+'-width')) $(prefix+'-width').value = template.width ?? '';
   if ($(prefix+'-height')) $(prefix+'-height').value = template.height ?? '';
   updateTemplateControls(prefix);
@@ -15,6 +17,8 @@ function updateTemplateControls(prefix) {
   $(prefix+'-custom').classList.toggle('hidden', $(prefix+'-codec').value !== 'custom');
   const mode = $(prefix+'-scale').value;
   $(prefix+'-percent-wrap').classList.toggle('hidden', mode !== 'percent');
+  $(prefix+'-fraction-wrap').classList.toggle('hidden', mode !== 'fraction');
+  $(prefix+'-short-edge-wrap').classList.toggle('hidden', mode !== 'shortEdge');
   if ($(prefix+'-dimensions')) $(prefix+'-dimensions').classList.toggle('hidden', mode !== 'exact');
 }
 function getTemplateForm(prefix) {
@@ -23,6 +27,8 @@ function getTemplateForm(prefix) {
     scaleMode: $(prefix+'-scale').value,
     percent: Number($(prefix+'-percent').value),
     crf: $(prefix+'-crf').value.trim(),
+    ...($(prefix+'-scale').value === 'fraction' ? {fraction:$(prefix+'-fraction').value.trim()} : {}),
+    ...($(prefix+'-scale').value === 'shortEdge' ? {shortEdge:Number($(prefix+'-short-edge').value)} : {}),
     ...($(prefix+'-scale').value === 'exact' ? {width:Number($(prefix+'-width').value),height:Number($(prefix+'-height').value)} : {})
   };
 }
@@ -31,16 +37,17 @@ function renderSessions(s) {
   if (!s.sessions.length) {container.append(el('div','sidebar-empty','尚无任务，先创建第一个任务'));return;}
   for (const item of s.sessions) {
     const button = el('button','session' + (s.id === item.id && !draftSession ? ' selected' : ''));
-    button.type='button'; button.disabled = s.activity !== 'idle' && s.id !== item.id;
+    button.type='button'; // All sessions remain selectable while other workers run.
     button.append(el('strong','session-title',item.source.split(/[\\/]/).filter(Boolean).pop() || item.source));
     button.append(el('span','session-date',new Date(item.createdAt).toLocaleString()));
-    button.append(el('span','session-meta',`完成 ${item.done}/${item.total} · 异常 ${item.failed}`));
+    button.append(el('span','session-meta',`完成 ${item.done}/${item.total} · 异常 ${item.failed} · 转码中 ${item.running || 0}`));
+    if (item.activity !== 'idle') button.append(el('span','session-working',item.activity === 'transcoding' ? '正在转码' : '正在处理'));
     button.title = `${item.source}\n${item.output}`;
     button.addEventListener('click', async () => {
       if (s.id === item.id && !draftSession) return;
       try {
-        draftSession = false;
         await request('/api/sessions/select',{id:item.id});
+        draftSession = false;
         await refresh();
       } catch (e) {toast(e.message);}
     });
@@ -61,7 +68,7 @@ function openCompare(t) {
   $('compare-title').textContent = t.relative;
   for (const side of ['source','output']) {
     const video = $('compare-'+side);
-    video.src = '/api/video?side=' + side + '&id=' + encodeURIComponent(t.id);
+    video.src = '/api/video?side=' + side + '&session=' + encodeURIComponent(model.id) + '&id=' + encodeURIComponent(t.id);
     video.load();
   }
   $('compare-dialog').classList.remove('hidden');
@@ -82,7 +89,6 @@ $('save-template').addEventListener('click', async () => {
   catch (e) {toast(e.message);}
 });
 $('new-task').addEventListener('click', () => {
-  if (model?.activity !== 'idle') return;
   draftSession = true;
   const source = $('source').value.trim() || model?.source || '';
   $('source').value = source;
@@ -92,6 +98,7 @@ $('new-task').addEventListener('click', () => {
   setTemplateForm('tpl', {videoCodec:'',scaleMode:'none',percent:100,crf:''});
   setText('setup-msg','新任务草稿：应用目录后将创建独立任务');
   $('save-template').disabled = true;
+  if (model) enableControls(model);
   $('source').focus();
 });
 $('item-inherit').addEventListener('change', () => $('item-fields').disabled = $('item-inherit').checked);
