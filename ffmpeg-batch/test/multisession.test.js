@@ -108,3 +108,64 @@ test('执行中切换不触发运行 worker 的项目重新加载',async t=>{
   assert.equal(mgr.activity,'verifying');
   mgr.current.activity='idle';
 });
+
+test('两个真实 FFmpeg 子进程可在不同任务中并行执行并各自验收', {timeout:90000},async t=>{
+  if(process.platform==='win32'){t.skip('此项使用 POSIX shell 包装器；Windows 由独立队列测试覆盖');return;}
+  const {spawnSync}=require('node:child_process');
+  const real=spawnSync('sh',['-c','command -v ffmpeg'],{encoding:'utf8'}).stdout?.trim();
+  if(!real || spawnSync('ffprobe',['-version'],{stdio:'ignore'}).status!==0){t.skip('需要 FFmpeg/FFprobe');return;}
+  const root=await fsp.mkdtemp(path.join(os.tmpdir(),'manager-real-parallel-'));
+  t.after(()=>fsp.rm(root,{recursive:true,force:true}));
+  const bin=path.join(root,'bin');await fsp.mkdir(bin);
+  const wrapper=path.join(bin,'ffmpeg');
+  await fsp.writeFile(wrapper,'#!/bin/sh\nsleep 3\nexec "'+real.replace(/"/g,'\\"')+'" "$@"\n');
+  await fsp.chmod(wrapper,0o755);
+  const mgr=new Manager(),workers=[];
+  const jobs=[];
+  for(const name of ['one','two']){
+    const source=path.join(root,'video-'+name),output=source+'_out';
+    await fsp.mkdir(source);
+    const input=path.join(source,'sample.mp4');
+    const generated=spawnSync(real,['-hide_banner','-loglevel','error','-y','-f','lavfi','-i','color=c=blue:s=160x90:r=8:d=1','-c:v','mpeg4',input],{encoding:'utf8'});
+    assert.equal(generated.status,0,generated.stderr);
+    mgr.configure({source,output});
+    const worker=mgr.current;
+    await worker.scan();
+    assert.equal(worker.project.tasks.length,1);
+    worker.saveTemplate({videoCodec:'libx264',scaleMode:'shortEdge',shortEdge:60});
+    worker.binaryReady=async()=>true;
+    workers.push(worker);
+    jobs.push({id:mgr.activeId,worker});
+  }
+  const oldPath=process.env.PATH;
+  let taskOne,taskTwo;
+  try{
+    process.env.PATH=bin+path.delimiter+oldPath;
+    mgr.selectSession(jobs[0].id);
+    taskOne=workers[0].start();
+    mgr.selectSession(jobs[1].id);
+    taskTwo=workers[1].start();
+    let simultaneouslyRunning=false;
+    for(let i=0;i<80;i++){
+      if(workers.every(w=>w.activity==='transcoding' && w.project.tasks[0].status==='running' && w.runningChild?.pid)){
+        simultaneouslyRunning=true;break;
+      }
+      await new Promise(resolve=>setTimeout(resolve,25));
+    }
+    assert.ok(simultaneouslyRunning,'两个真实 ffmpeg 子进程应该同时运行');
+    assert.notEqual(workers[0].runningChild.pid,workers[1].runningChild.pid);
+    assert.equal(mgr.listSessions().find(s=>s.id===jobs[0].id).running,1);
+    assert.equal(mgr.listSessions().find(s=>s.id===jobs[1].id).running,1);
+    await Promise.all([taskOne,taskTwo]);
+    for(const worker of workers){
+      assert.equal(worker.project.tasks[0].status,'done',worker.project.tasks[0].error);
+      assert.ok((await fsp.stat(worker.project.tasks[0].output)).size>0);
+    }
+  }finally{
+    process.env.PATH=oldPath;
+    for(const worker of workers){
+      if(worker.activity==='transcoding')worker.stop();
+    }
+    await Promise.allSettled([taskOne,taskTwo].filter(Boolean));
+  }
+});
