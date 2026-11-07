@@ -62,7 +62,9 @@ async function inspector(url){
     }
     let diagnostic;
     try {
-      diagnostic=await evaluate('({url:location.href,ready:document.readyState,connection:document.getElementById("connection")?.textContent,source:!!document.getElementById("source"),host:!!document.getElementById("workspace-host"),template:!!document.getElementById("task-workspace-template"),state:document.body?.textContent?.slice(0,200)})');
+      diagnostic=await evaluate('({url:location.href,ready:document.readyState,connection:document.getElementById("connection")?.textContent,source:!!document.getElementById("source"),host:!!document.getElementById("workspace-host"),template:!!document.getElementById("task-workspace-template"),state:document.body?.textContent?.slice(0,200),workspaceType:typeof WorkspaceDOM,
+    videoType:typeof DualVideoSync,appType:typeof createDraftWorkspace,errors:window.__pageErrors,
+    scripts:[...document.scripts].map(el=>el.src),html:document.documentElement.outerHTML.slice(-160)})');
     }catch(error){diagnostic={error:error.message};}
     throw new Error('页面等待超时：'+message+'；诊断 '+JSON.stringify(diagnostic));
   }
@@ -97,6 +99,8 @@ test('真实 Chromium：全工作区克隆、历史任务 DOM 恢复、日志滚
   devtools=await inspector(await chromeEndpoint(profile,chromeProcess));
   await devtools.command('Page.enable');
   await devtools.command('Runtime.enable');
+  await devtools.command('Page.addScriptToEvaluateOnNewDocument', {source:
+    'window.__pageErrors=[];window.addEventListener("error",function(e){window.__pageErrors.push(e.message+" at "+e.filename+":"+e.lineno)})'});
   await devtools.command('Page.navigate',{url:'http://127.0.0.1:'+port+'/'});
   await devtools.until('document.getElementById("source") && document.getElementById("connection").textContent==="已连接"','首页完成装载');
   const first=await devtools.evaluate(`(() => {
