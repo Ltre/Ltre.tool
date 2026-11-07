@@ -76,7 +76,7 @@ test('Q1-C：日志滚动末行、五个同步按钮和方向键双击规则',()
   for(const id of ['compare-back-8','compare-back-2','compare-play-toggle','compare-next-2','compare-next-8'])
     assert.ok(footer.includes(id));
   const app=get('public/app.js'),ui=get('public/workspace-ui.js'),sync=get('public/compare-sync.js');
-  assert.match(app,/logView\.scrollTop\s*=/);
+  assert.match(app,/log\.scrollTop\s*=/);
   assert.match(app,/logScrollStates/);
   assert.match(ui,/compareController\.activate\(\)/);
   assert.match(ui,/compareController\.deactivate\(\)/);
