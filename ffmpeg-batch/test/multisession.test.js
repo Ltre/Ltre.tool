@@ -16,6 +16,8 @@ test('旧配置迁移到 .data，不覆盖新位置的已有设置',async t=>{
   await fsp.writeFile(path.join(from,'.manager-sessions.json'),'{"sessions":[]}');
   migrateLocalData(from,to);
   assert.equal(JSON.parse(await fsp.readFile(path.join(to,'.manager-config.json'),'utf8')).source,'legacy');
+  assert.equal(fs.existsSync(path.join(from,'.manager-config.json')),false);
+  assert.equal(fs.existsSync(path.join(from,'.manager-sessions.json')),false);
   await fsp.writeFile(path.join(to,'.manager-config.json'),'{"source":"new"}');
   migrateLocalData(from,to);
   assert.equal(JSON.parse(await fsp.readFile(path.join(to,'.manager-config.json'),'utf8')).source,'new');
@@ -63,6 +65,12 @@ test('两个会话的扫描/转码状态互相隔离，执行中允许创建、�
   assert.equal(workerA.activity,'transcoding');
   assert.equal(manager.listSessions().find(x=>x.id===idA).running,1);
   assert.equal(manager.listSessions().find(x=>x.id===idB).running,1);
+  // A symlink alias to an existing output directory must not become a third worker.
+  const sourceC=path.join(temp,'c');await fsp.mkdir(sourceC);
+  const outputAlias=sourceC+'_out';
+  await fsp.symlink(sourceA+'_out',outputAlias,process.platform==='win32'?'junction':'dir');
+  assert.throws(()=>manager.configure({source:sourceC,output:outputAlias}),/输出目录已被另一任务占用/);
+
   manager.selectSession(idA);
   assert.equal(manager.snapshot().counts.running,1);
   manager.pause();

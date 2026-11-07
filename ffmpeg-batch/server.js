@@ -20,7 +20,14 @@ function migrateLocalData(fromDir = APP_DIR, toDir = DATA_DIR) {
   fs.mkdirSync(toDir, {recursive: true});
   for (const filename of ['.manager-config.json', '.manager-sessions.json']) {
     const previous = path.join(fromDir, filename), next = path.join(toDir, filename);
-    if (!fs.existsSync(next) && fs.existsSync(previous)) fs.copyFileSync(previous, next);
+    if (!fs.existsSync(next) && fs.existsSync(previous)) {
+      try { fs.renameSync(previous, next); }
+      catch (error) {
+        if (error.code !== 'EXDEV') throw error;
+        fs.copyFileSync(previous, next);
+        fs.unlinkSync(previous);
+      }
+    }
   }
 }
 if (process.env.FFMPEG_BATCH_DATA_DIR) fs.mkdirSync(DATA_DIR, {recursive: true});
@@ -127,6 +134,14 @@ function atomicJson(file, data) {
   const tmp = `${file}.${process.pid}.writing`;
   fs.writeFileSync(tmp, JSON.stringify(data, null, 2), 'utf8');
   fs.renameSync(tmp, file);
+}
+function canonicalOutput(output) {
+  const absolute = path.resolve(output);
+  try {
+    return (fs.existsSync(absolute)
+      ? fs.realpathSync.native(absolute)
+      : path.join(fs.realpathSync.native(path.dirname(absolute)), path.basename(absolute))).toLowerCase();
+  } catch {return absolute.toLowerCase();}
 }
 function ensureSibling(source, output) {
   if (!path.isAbsolute(source) || !path.isAbsolute(output)) throw new Error('路径必须是绝对路径');
@@ -534,6 +549,7 @@ class Manager {
   loadWorker(session) {
     let worker = this.workers.get(session.id);
     if (worker) return worker;
+    ensureSibling(session.source, session.output);
     worker = new SessionWorker({isolated: true});
     worker.openProject(session.source, session.output);
     // Registry identity is canonical across upgrades from older session files.
@@ -559,7 +575,7 @@ class Manager {
     // If already running, selecting an existing task must never reopen it.
     const existing = this.sessions.find(s => s.source === source && s.output === output);
     if (existing) {this.selectSession(existing.id); return;}
-    if (this.sessions.some(s => path.normalize(s.output).toLowerCase() === path.normalize(output).toLowerCase())) {
+    if (this.sessions.some(s => canonicalOutput(s.output) === canonicalOutput(output))) {
       throw new Error('该输出目录已被另一任务占用');
     }
     const worker = new SessionWorker({isolated: true});
