@@ -174,13 +174,17 @@ test('真实 Chromium：全工作区克隆、历史任务 DOM 恢复、日志滚
   const mediaResult=await devtools.evaluate(`(async()=>{
     const src=document.getElementById('compare-source'),out=document.getElementById('compare-output');
     for(const video of [src,out]){
-      video.__testTime=0;video.__testPaused=true;
+      video.__testTime=0;video.__testPaused=true;video.__testEnded=false;
       Object.defineProperty(video,'duration',{configurable:true,get(){return 60;}});
       Object.defineProperty(video,'currentTime',{configurable:true,
         get(){return this.__testTime;},
-        set(value){this.__testTime=value;this.dispatchEvent(new Event('seeking'));}});
+        set(value){this.__testTime=value;if(value<this.duration)this.__testEnded=false;this.dispatchEvent(new Event('seeking'));}});
       Object.defineProperty(video,'paused',{configurable:true,get(){return this.__testPaused;}});
-      video.play=function(){this.__testPaused=false;this.dispatchEvent(new Event('play'));return Promise.resolve();};
+      Object.defineProperty(video,'ended',{configurable:true,get(){return this.__testEnded;}});
+      video.play=function(){
+        if(this.__testEnded)return Promise.reject(new Error('必须先从末尾跳回开头'));
+        this.__testPaused=false;this.dispatchEvent(new Event('play'));return Promise.resolve();
+      };
       video.pause=function(){this.__testPaused=true;this.dispatchEvent(new Event('pause'));};
     }
     openCompare({id:'browser-log',relative:'logs/test.mp4'});
@@ -197,12 +201,23 @@ test('真实 Chromium：全工作区克隆、历史任务 DOM 恢复、日志滚
     const key=(name)=>document.dispatchEvent(new KeyboardEvent('keydown',{key:name,bubbles:true,cancelable:true}));
     key('ArrowLeft');key('ArrowLeft');
     const afterDouble=[src.currentTime,out.currentTime];
+    for(const video of [src,out]){
+      video.__testTime=60;
+      video.__testEnded=true;
+      video.__testPaused=true;
+      video.dispatchEvent(new Event('ended'));
+    }
+    document.getElementById('compare-play-toggle').click();
+    await new Promise(resolve=>setTimeout(resolve,25));
+    const replay=[src.currentTime,out.currentTime,!src.paused,!out.paused,
+      document.getElementById('compare-play-toggle').textContent];
     closeCompare();
-    return {afterBack,afterForward,playing,paused,afterDouble};
+    return {afterBack,afterForward,playing,paused,afterDouble,replay};
   })()`);
   assert.deepEqual(mediaResult.afterBack,[22,22]);
   assert.deepEqual(mediaResult.afterForward,[24,24]);
   assert.deepEqual(mediaResult.playing,[true,true,'⏸']);
   assert.deepEqual(mediaResult.paused,[true,true,'▶']);
   assert.deepEqual(mediaResult.afterDouble,[16,16]);
+  assert.deepEqual(mediaResult.replay,[0,0,true,true,'⏸']);
 });

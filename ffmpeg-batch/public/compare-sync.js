@@ -20,9 +20,9 @@
       }
       return Math.max(0, Math.min(Number.isFinite(time) ? time : 0, limit === Infinity ? Infinity : Math.max(0,limit-0.05)));
     }
-    function place(video,time) {
+    function place(video,time,force=false) {
       const target=commonTime(time);
-      if (Math.abs(safeTime(video)-target)<0.04) return;
+      if (!force && Math.abs(safeTime(video)-target)<0.04) return;
       try {
         programmatic.set(video,target);
         video.currentTime=target;
@@ -32,6 +32,16 @@
       }
     }
     function align(time) {const target=commonTime(time);for(const video of videos)place(video,target);}
+    function reachedEnd(reference) {
+      // HTMLMediaElement.play() does not reliably rewind an ended video.
+      // Restart the two players together, including when their durations differ.
+      if (videos.some(video=>video.ended)) return true;
+      const durations=videos.map(video=>video.duration).filter(duration=>Number.isFinite(duration) && duration>0);
+      if (!durations.length) return false;
+      const sharedEnd=Math.min(...durations);
+      return videos.some(video=>safeTime(video)>=Math.max(0,sharedEnd-0.1)) ||
+        safeTime(reference)>=Math.max(0,sharedEnd-0.1);
+    }
     function seekBy(seconds) {
       if(!active)return;
       align(safeTime(source)+seconds);
@@ -46,9 +56,15 @@
     }
     async function playBoth(reference=source) {
       if(!active)return;
-      align(safeTime(reference));
       syncingPlayback=true;
       try{
+        if (reachedEnd(reference)) {
+          // Force a seek to zero even if the reported time is already near zero:
+          // this also clears the native 'ended' state before play().
+          for (const video of videos) place(video,0,true);
+        } else {
+          align(safeTime(reference));
+        }
         const results=await Promise.allSettled(videos.map(video=>Promise.resolve().then(()=>video.play())));
         const rejected=results.find(result=>result.status==='rejected');
         if(rejected) {

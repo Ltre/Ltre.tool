@@ -5,13 +5,16 @@ const {createController,DOUBLE_TAP_MS}=require('../public/compare-sync');
 class VideoMock {
   constructor(duration=100) {this._time=0;this.duration=duration;this.paused=true;this.ended=false;this.events=new Map();}
   get currentTime(){return this._time;}
-  set currentTime(v){this._time=v;this.dispatch('seeking');}
+  set currentTime(v){this._time=v;if(v<this.duration)this.ended=false;this.dispatch('seeking');}
   addEventListener(name,cb){
     if(!this.events.has(name))this.events.set(name,[]);
     this.events.get(name).push(cb);
   }
   dispatch(name){for(const callback of this.events.get(name)||[])callback({type:name,target:this});}
-  play(){this.paused=false;this.dispatch('play');return Promise.resolve();}
+  play(){
+    if(this.ended)return Promise.reject(new Error('结束的媒体必须先重置进度'));
+    this.paused=false;this.dispatch('play');return Promise.resolve();
+  }
   pause(){const wasPaused=this.paused;this.paused=true;if(!wasPaused)this.dispatch('pause');}
 }
 function setup(){
@@ -99,4 +102,57 @@ test('切换方向立即结算前一次单击；两个视频时间受共同边�
   v.controller.seekBy(-1000);
   assert.equal(v.source.currentTime,0);
   assert.equal(v.output.currentTime,0);
+});
+
+test('Q1-D：两个视频均播放至末尾后，点击统一播放自动回到 0 秒同时开始',async()=>{
+  const v=setup();
+  for(const video of [v.source,v.output]){
+    video._time=video.duration;
+    video.ended=true;
+    video.paused=true;
+    video.dispatch('ended');
+  }
+  assert.equal(v.toggle.textContent,'▶');
+  // Must use the same toggle path as the compare dialog's bottom play button.
+  v.controller.toggleBoth();
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(v.source.currentTime,0);
+  assert.equal(v.output.currentTime,0);
+  assert.equal(v.source.paused,false);
+  assert.equal(v.output.paused,false);
+  assert.equal(v.source.ended,false);
+  assert.equal(v.output.ended,false);
+  assert.equal(v.toggle.textContent,'⏸');
+  assert.deepEqual(v.errors,[]);
+});
+
+test('Q1-D：仅短视频结束时，也同时从头播放，而不是保留另一侧当前位置',async()=>{
+  const v=setup();
+  v.source.duration=60;
+  v.output.duration=45;
+  v.source._time=45;
+  v.output._time=45;
+  v.output.ended=true;
+  v.source.paused=true;v.output.paused=true;
+  await v.controller.playBoth();
+  assert.equal(v.source.currentTime,0);
+  assert.equal(v.output.currentTime,0);
+  assert.equal(v.source.paused,false);
+  assert.equal(v.output.paused,false);
+  assert.deepEqual(v.errors,[]);
+});
+
+test('Q1-D：末尾附近即使 ended 尚未更新也重播；中途暂停则从当前位置继续',async()=>{
+  const v=setup();
+  v.source._time=99.96;
+  v.output._time=99.96;
+  await v.controller.playBoth();
+  assert.equal(v.source.currentTime,0);
+  assert.equal(v.output.currentTime,0);
+  v.controller.pauseBoth();
+  v.source.currentTime=32;
+  await v.controller.playBoth();
+  assert.equal(v.source.currentTime,32);
+  assert.equal(v.output.currentTime,32);
+  assert.deepEqual(v.errors,[]);
 });
