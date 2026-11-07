@@ -1,0 +1,42 @@
+'use strict';
+const test = require('node:test');
+const assert = require('node:assert/strict');
+const {WorkspaceViews} = require('../public/workspace-dom');
+
+test('新建工作区真实克隆完整 DOM，并隔离各自输入与折叠状态',()=>{
+  let serial=0, cloneCount=0;
+  const template={content:{cloneNode(deep) {
+    assert.equal(deep,true);
+    cloneCount++;
+    const node={identity:++serial, field:{value:''}};
+    return {firstElementChild:node};
+  }}};
+  const host={children:[],replaceChildren(...nodes){this.children=nodes;}};
+  const views=new WorkspaceViews(template,host);
+  const first=views.activate('session-A').view;
+  first.element.field.value='A 任务的独立模板';
+  first.closedDirs.add('目录A');
+  assert.strictEqual(host.children[0],first.element);
+  const newTask=views.activate('__new-task__').view;
+  assert.notStrictEqual(newTask.element,first.element,'新任务需要物理独立的节点');
+  assert.equal(newTask.element.field.value,'');
+  assert.equal(newTask.closedDirs.size,0);
+  newTask.element.field.value='新任务尚未应用的目录';
+  const second=views.activate('session-B').view;
+  second.element.field.value='B';
+  assert.equal(second.element.field.value,'B');
+  assert.equal(first.element.field.value,'A 任务的独立模板');
+  const resumed=views.activate('session-A');
+  assert.equal(resumed.created,false);
+  assert.strictEqual(resumed.view.element,first.element);
+  assert.equal(resumed.view.element.field.value,'A 任务的独立模板');
+  assert.ok(resumed.view.closedDirs.has('目录A'));
+  assert.equal(cloneCount,3);
+  views.drop('__new-task__');
+  assert.equal(views.get('__new-task__'),undefined);
+  assert.equal(views.get('session-B').element.field.value,'B');
+  const brandNew=views.activate('__new-task__').view;
+  assert.notStrictEqual(brandNew.element,newTask.element);
+  assert.equal(brandNew.element.field.value,'');
+  assert.equal(cloneCount,4);
+});

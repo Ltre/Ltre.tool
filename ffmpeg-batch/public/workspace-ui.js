@@ -34,7 +34,16 @@ function getTemplateForm(prefix) {
 }
 function renderSessions(s) {
   const container = $('task-list'); container.replaceChildren();
-  if (!s.sessions.length) {container.append(el('div','sidebar-empty','尚无任务，先创建第一个任务'));return;}
+  if (draftSession) {
+    const current = el('div','session session-draft selected');
+    current.append(el('strong','session-title','新建任务 · 独立工作区'),
+      el('span','session-meta','尚未应用目录，所有统计与结果均为空'));
+    container.append(current);
+  }
+  if (!s.sessions.length) {
+    if (!draftSession) container.append(el('div','sidebar-empty','尚无任务，先创建第一个任务'));
+    return;
+  }
   for (const item of s.sessions) {
     const button = el('button','session' + (s.id === item.id && !draftSession ? ' selected' : ''));
     button.type='button'; // All sessions remain selectable while other workers run.
@@ -48,6 +57,9 @@ function renderSessions(s) {
       try {
         await request('/api/sessions/select',{id:item.id});
         draftSession = false;
+        workspaceViews.drop(DRAFT_KEY);
+        if(currentEditTask)closeFileTemplate();
+        if(currentCompareTask)closeCompare();
         await refresh();
       } catch (e) {toast(e.message);}
     });
@@ -63,7 +75,12 @@ function openFileTemplate(t) {
   $('item-fields').disabled = $('item-inherit').checked;
 }
 function closeFileTemplate() { currentEditTask = null; $('file-template-dialog').classList.add('hidden'); }
+const compareController = DualVideoSync.createController({
+  source: $('compare-source'), output: $('compare-output'),
+  toggle: $('compare-play-toggle'), state: $('compare-sync-state'), onError: toast
+});
 function openCompare(t) {
+  if (currentCompareTask) closeCompare();
   currentCompareTask = t.id;
   $('compare-title').textContent = t.relative;
   for (const side of ['source','output']) {
@@ -72,35 +89,24 @@ function openCompare(t) {
     video.load();
   }
   $('compare-dialog').classList.remove('hidden');
+  compareController.activate();
 }
 function closeCompare() {
+  compareController.deactivate();
   for (const side of ['source','output']) {
     const video=$('compare-'+side); video.pause(); video.removeAttribute('src'); video.load();
   }
   currentCompareTask = null;
   $('compare-dialog').classList.add('hidden');
 }
-for (const prefix of ['tpl','item']) {
-  $(prefix+'-codec').addEventListener('change', () => updateTemplateControls(prefix));
-  $(prefix+'-scale').addEventListener('change', () => updateTemplateControls(prefix));
+for (const id of ['item-codec','item-scale']) $(id).addEventListener('change',()=>updateTemplateControls('item'));
+$('new-task').addEventListener('click', createDraftWorkspace);
+for (const [id, seconds] of [['compare-back-8',-8],['compare-back-2',-2],
+  ['compare-next-2',2],['compare-next-8',8]]) {
+  $(id).addEventListener('click',()=>compareController.seekBy(seconds));
 }
-$('save-template').addEventListener('click', async () => {
-  try {await request('/api/template',getTemplateForm('tpl')); toast('批量模板已保存'); await refresh();}
-  catch (e) {toast(e.message);}
-});
-$('new-task').addEventListener('click', () => {
-  draftSession = true;
-  const source = $('source').value.trim() || model?.source || '';
-  $('source').value = source;
-  $('output').value = defaultOut(source) + '_task_' + Date.now().toString(36);
-  outputEdited = true;
-  lastProjectKey = 'draft';
-  setTemplateForm('tpl', {videoCodec:'',scaleMode:'none',percent:100,crf:''});
-  setText('setup-msg','新任务草稿：应用目录后将创建独立任务');
-  $('save-template').disabled = true;
-  if (model) enableControls(model);
-  $('source').focus();
-});
+$('compare-play-toggle').addEventListener('click',()=>compareController.toggleBoth());
+document.addEventListener('keydown',event=>compareController.handleKey(event),true);
 $('item-inherit').addEventListener('change', () => $('item-fields').disabled = $('item-inherit').checked);
 $('save-item-template').addEventListener('click', async () => {
   try {

@@ -1,5 +1,52 @@
 'use strict';
 const $ = id => document.getElementById(id);
+const workspaceViews = new WorkspaceDOM.WorkspaceViews($('task-workspace-template'), $('workspace-host'));
+const DRAFT_KEY = '__new-task__';
+let draftSuffix = '';
+const logScrollStates = new Map();
+let serverSnapshot = null;
+function mountWorkspace(key) {
+  const old = workspaceViews.get(workspaceViews.activeKey);
+  if (old) {old.sourceEdited = sourceEdited; old.outputEdited = outputEdited;}
+  const activated = workspaceViews.activate(key);
+  const view = activated.view;
+  closedDirs = view.closedDirs;
+  openedFiles = view.openedFiles;
+  sourceEdited = view.sourceEdited;
+  outputEdited = view.outputEdited;
+  if (!view.initialized) {bindWorkspaceControls(); view.initialized = true;}
+  return activated;
+}
+function draftSnapshot(s = {}) {
+  return {
+    configured: false, id: null, activity: 'idle', shouldPause: false,
+    note: '新建任务工作区：请设置源视频根目录并应用，已有任务不受影响',
+    source: '', output: '', scannedAt: null, scanProgress: {done: 0, total: 0},
+    counts: {total: 0, pending: 0, running: 0, done: 0, failed: 0, interrupted: 0, probe_failed: 0, conflict: 0},
+    sourceBytes: 0, outputBytes: 0, tasks: [], sessions: s.sessions || [],
+    template: {videoCodec: '', scaleMode: 'none', percent: 100, crf: ''}
+  };
+}
+function createDraftWorkspace() {
+  if (typeof closeFileTemplate === 'function') closeFileTemplate();
+  if (typeof closeCompare === 'function' && currentCompareTask) closeCompare();
+  workspaceViews.drop(DRAFT_KEY);
+  draftSession = true;
+  draftSuffix = '_task_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2,6);
+  const {view} = mountWorkspace(DRAFT_KEY);
+  view.sourceEdited = false;
+  view.outputEdited = false;
+  sourceEdited = false;
+  outputEdited = false;
+  $('source').value = '';
+  $('output').value = '';
+  setTemplateForm('tpl', draftSnapshot().template);
+  model = draftSnapshot(serverSnapshot || {});
+  renderSummary(model);
+  renderTree(model);
+  renderSessions(serverSnapshot || {sessions:[]});
+  $('source').focus();
+}
 let model = null;
 let busy = false;
 let sourceEdited = false;
@@ -82,6 +129,16 @@ function renderSummary(s) {
   const saving = s.outputBytes && s.sourceBytes ? ` · 已完成文件压缩率 ${Math.round((1-s.outputBytes / Math.max(1, s.tasks.filter(t => t.status === 'done').reduce((n,t) => n+t.bytes,0))) *100)}%` : '';
   setText('overall-size', `${fmtBytes(s.sourceBytes)} 源数据${saving}`);
   setText('status-note', s.note || '就绪');
+  const exports = { 'export-cmd': '/api/export/commands', 'export-csv': '/api/export/report.csv',
+    'export-json': '/api/export/report.json' };
+  for (const [id, url] of Object.entries(exports)) {
+    const link = $(id);
+    if (s.configured && !draftSession) {
+      link.href = url; link.removeAttribute('aria-disabled'); link.tabIndex = 0;
+    } else {
+      link.removeAttribute('href'); link.setAttribute('aria-disabled', 'true'); link.tabIndex = -1;
+    }
+  }
   setText('last-scan', s.activity === 'scanning' ? `扫描中 ${s.scanProgress.done}/${s.scanProgress.total}` : s.scannedAt ? `上次扫描：${new Date(s.scannedAt).toLocaleString()}` : '尚未扫描');
   const badge = $('activity-badge');
   badge.className = 'activity' + (s.activity === 'transcoding' ? ' running' : '');
@@ -148,7 +205,11 @@ function renderFile(parent, t, depth) {
   const badgeSlot = el('span'); badgeSlot.append(el('span', 'status-pill '+t.status, mapStatus[t.status] || t.status)); hdr.append(badgeSlot);
   const p = el('span', 'file-progress', t.status === 'done' ? '100%' : t.status === 'running' ? `${(t.progress || 0).toFixed(1)}%` : '—');
   const line = el('div','mini-progress'); const fill=el('span'); fill.style.width=(t.status === 'done' ? 100 : t.progress || 0)+'%'; line.append(fill); p.append(line); hdr.append(p);
-  hdr.addEventListener('click', () => { if (openedFiles.has(t.id)) openedFiles.delete(t.id); else openedFiles.add(t.id); renderTree(model); });
+  hdr.addEventListener('click', () => {
+    if (openedFiles.has(t.id)) openedFiles.delete(t.id);
+    else {openedFiles.add(t.id); logScrollStates.delete(workspaceViews.activeKey + ':' + t.id);}
+    renderTree(model);
+  });
   row.append(hdr);
   if (openedFiles.has(t.id)) {
     const info = el('div','file-details');
@@ -173,10 +234,23 @@ function renderFile(parent, t, depth) {
       title.append(copy); info.append(title); info.append(el('pre','command-code',t.command));
     }
     if (t.error) info.append(el('div','err',t.error));
-    if (t.log) { info.append(el('div','cmd-title','最近一次 FFmpeg 日志（仅保留末尾片段）')); info.append(el('pre','log-code',t.log)); }
+    if (t.log) {
+      info.append(el('div','cmd-title','最近一次 FFmpeg 日志（仅保留末尾片段）'));
+      const logView = el('pre','log-code',t.log);
+      logView.dataset.taskId = t.id;
+      logView.tabIndex = 0;
+      info.append(logView);
+    }
     row.append(info);
   }
   parent.append(row);
+  const logView = row.querySelector('.log-code');
+  if (logView) {
+    const remembered = logScrollStates.get(workspaceViews.activeKey + ':' + t.id);
+    // The first opening follows the latest line; a user reading older lines
+    // keeps that position across periodic tree rerenders.
+    logView.scrollTop = remembered && !remembered.follow ? remembered.top : logView.scrollHeight;
+  }
 }
 function renderNode(parent,node,depth) {
   const dirs = [...node.dirs.values()].sort((a,b) => a.name.localeCompare(b.name,'zh-Hans-CN'));
@@ -184,55 +258,94 @@ function renderNode(parent,node,depth) {
   for (const file of node.files.sort((a,b)=>a.relative.localeCompare(b.relative,'zh-Hans-CN'))) renderFile(parent,file,depth);
 }
 function renderTree(s) {
-  const container=$('tree'); container.replaceChildren();
+  const container=$('tree');
+  for (const log of container.querySelectorAll('.log-code')) {
+    const follow = log.scrollHeight - log.clientHeight - log.scrollTop <= 24;
+    logScrollStates.set(workspaceViews.activeKey + ':' + log.dataset.taskId,
+      {top: log.scrollTop, follow});
+  }
+  container.replaceChildren();
   const filtered = s.tasks.filter(t => shouldShow(t,$('filter').value));
   if (!filtered.length) { container.append(el('div','empty', s.activity === 'scanning' ? `正在探测文件 ${s.scanProgress.done}/${s.scanProgress.total}…` : '没有符合当前筛选条件的视频')); return; }
   const tree=buildTree(filtered); const statMap = fullStats(s.tasks);
   const attach = node => {node.stats = statMap.get(node.id); for (const child of node.dirs.values()) attach(child);};
   attach(tree); renderNode(container,tree,0);
 }
+let refreshBusy = false;
+let refreshPending = false;
 async function refresh() {
-  if (busy) return;
-  busy=true;
+  if (refreshBusy) {refreshPending = true; return;}
+  refreshBusy = true;
   try {
-    const s=await request('/api/status');
+    const snapshot = await request('/api/status');
+    serverSnapshot = snapshot;
     setText('connection','已连接');
-    const projectKey=s.id || '';
-    if (projectKey !== lastProjectKey && !draftSession) {
-      lastProjectKey=projectKey;
-      $('source').value=s.source; $('output').value=s.output || defaultOut(s.source);
-      sourceEdited=!!s.source; outputEdited=!!s.output;
-      closedDirs.clear(); openedFiles.clear();
-      setTemplateForm('tpl', s.template);
+    const key = draftSession ? DRAFT_KEY : (snapshot.id || '__empty__');
+    const {created} = mountWorkspace(key);
+    if (!draftSession && created) {
+      $('source').value = snapshot.source;
+      $('output').value = snapshot.output || defaultOut(snapshot.source);
+      sourceEdited = !!snapshot.source;
+      outputEdited = !!snapshot.output;
+      setTemplateForm('tpl',snapshot.template);
     }
-    model=s; renderSummary(s); renderSessions(s); renderTree(s);
-  } catch (e) { setText('connection','连接断开'); }
-  finally { busy=false; }
+    model = draftSession ? draftSnapshot(snapshot) : snapshot;
+    renderSummary(model);
+    renderSessions(snapshot);
+    renderTree(model);
+  } catch (e) {setText('connection','连接断开');}
+  finally {
+    refreshBusy = false;
+    if (refreshPending) {refreshPending = false; void refresh();}
+  }
 }
-function updateOutputFromSource() { if (!outputEdited) $('output').value=defaultOut($('source').value.trim()); }
-$('source').addEventListener('input', () => { sourceEdited=true; updateOutputFromSource(); });
-$('output').addEventListener('input', () => { outputEdited=true; });
-$('default-output').addEventListener('click', () => { $('output').value=defaultOut($('source').value.trim()); outputEdited=false; });
-$('configure').addEventListener('click', async () => {
-  const ok = await action('/api/config', {source:$('source').value.trim(),output:$('output').value.trim()});
-  if (ok) {draftSession = false; lastProjectKey = ''; await refresh();}
-});
-$('scan').addEventListener('click', async () => {
-  const ok = await action('/api/scan', {source:$('source').value.trim(),output:$('output').value.trim()});
-  if (ok) {draftSession = false; lastProjectKey = ''; await refresh();}
-});
-$('start').addEventListener('click', () => action('/api/start'));
-$('pause').addEventListener('click', () => action('/api/pause'));
-$('stop').addEventListener('click', () => { if (confirm('立即终止当前视频转码？未完成文件保留为 .partial，重试时会删除并从头转码。')) action('/api/stop'); });
-$('retry').addEventListener('click', () => action('/api/retry'));
-$('verify').addEventListener('click', () => action('/api/verify', { deep: false }));
-$('verify-deep').addEventListener('click', () => { if (confirm('完整解码验收需要读取所有已完成视频，可能比较耗时。继续？')) action('/api/verify',{deep:true}); });
-$('filter').addEventListener('change', () => { if (model) renderTree(model); });
-$('expand').addEventListener('click', () => { closedDirs.clear(); if(model) renderTree(model); });
-$('collapse').addEventListener('click', () => {
-  if (!model) return; closedDirs.clear(); const visit=(node) => { for (const child of node.dirs.values()) { closedDirs.add(child.id); visit(child); } };
-  visit(buildTree(model.tasks)); renderTree(model);
-});
+function outputSuggestion(source) {
+  const base=defaultOut(source);
+  return base && draftSession ? base + draftSuffix : base;
+}
+function updateOutputFromSource() { if (!outputEdited) $('output').value=outputSuggestion($('source').value.trim()); }
+async function applyProject(endpoint) {
+  const source=$('source').value.trim(), output=$('output').value.trim();
+  try {
+    await request(endpoint,{source,output});
+    draftSession = false;
+    workspaceViews.drop(DRAFT_KEY);
+    await refresh();
+  } catch (e) {toast(e.message);}
+}
+function bindWorkspaceControls() {
+  $('source').addEventListener('input', () => {sourceEdited=true; updateOutputFromSource();});
+  $('output').addEventListener('input', () => {outputEdited=true;});
+  $('default-output').addEventListener('click', () => {$('output').value=outputSuggestion($('source').value.trim()); outputEdited=false;});
+  $('configure').addEventListener('click', () => applyProject('/api/config'));
+  $('scan').addEventListener('click', () => applyProject('/api/scan'));
+  $('start').addEventListener('click', () => action('/api/start'));
+  $('pause').addEventListener('click', () => action('/api/pause'));
+  $('stop').addEventListener('click', () => {
+    if (confirm('立即终止当前视频转码？未完成文件保留为 .partial，重试时会删除并从头转码。')) action('/api/stop');
+  });
+  $('retry').addEventListener('click', () => action('/api/retry'));
+  $('verify').addEventListener('click', () => action('/api/verify', {deep:false}));
+  $('verify-deep').addEventListener('click', () => {
+    if (confirm('完整解码验收需要读取所有已完成视频，可能比较耗时。继续？')) action('/api/verify',{deep:true});
+  });
+  $('filter').addEventListener('change', () => {if (model) renderTree(model);});
+  $('expand').addEventListener('click', () => {closedDirs.clear();if(model)renderTree(model);});
+  $('collapse').addEventListener('click', () => {
+    if (!model) return;
+    closedDirs.clear();
+    const visit = node => {for (const child of node.dirs.values()) {closedDirs.add(child.id);visit(child);}};
+    visit(buildTree(model.tasks));renderTree(model);
+  });
+  $('browse-source').addEventListener('click', () => {
+    $('dialog').classList.remove('hidden');openDir($('source').value.trim() || undefined);
+  });
+  for (const id of ['tpl-codec','tpl-scale']) $(id).addEventListener('change', () => updateTemplateControls('tpl'));
+  $('save-template').addEventListener('click', async () => {
+    try {await request('/api/template',getTemplateForm('tpl'));toast('批量模板已保存');await refresh();}
+    catch(e){toast(e.message);}
+  });
+}
 async function openDir(dir) {
   try {
     const result = await request('/api/directories'+(dir?'?path='+encodeURIComponent(dir):''));
@@ -254,7 +367,7 @@ $('dialog').addEventListener('click',e=>{ if(e.target===$('dialog')) $('dialog')
 $('dir-select').addEventListener('click',()=>{
   if (!activeModalDir) return toast('请选择目录');
   $('source').value=activeModalDir;
-  $('output').value=defaultOut(activeModalDir) + (draftSession ? '_task_' + Date.now().toString(36) : '');
+  $('output').value=outputSuggestion(activeModalDir);
   outputEdited=false;
   $('dialog').classList.add('hidden');
 });
