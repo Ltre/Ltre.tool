@@ -361,7 +361,6 @@ async function openDir(dir) {
     }
   } catch (e) { toast(e.message); }
 }
-$('browse-source').addEventListener('click',() => { $('dialog').classList.remove('hidden'); openDir($('source').value.trim() || undefined); });
 $('close-dialog').addEventListener('click',()=>$('dialog').classList.add('hidden'));
 $('dialog').addEventListener('click',e=>{ if(e.target===$('dialog')) $('dialog').classList.add('hidden'); });
 $('dir-select').addEventListener('click',()=>{
