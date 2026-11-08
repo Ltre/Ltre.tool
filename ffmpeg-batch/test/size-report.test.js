@@ -41,7 +41,7 @@ test('Q1-E：历史完成任务的输出变大标记在 API、CSV、命令报告
   assert.equal(snapshot.tasks[5].targetHeight,719);
   assert.ok(!snapshot.tasks[5].command.includes('-vf'),snapshot.tasks[5].command);
   const csv=reopened.exportCsv();
-  assert.match(csv,/"outputLarger","sizeDeltaBytes"/);
+  assert.match(csv,/outputLarger,sizeDeltaBytes/,'CSV 表头为未加引号的字段名称');
   assert.match(csv,/"true","500"/);
   assert.match(csv,/"false","-200"/);
   assert.match(reopened.exportCommands(),/grown\.mp4[^\n]*\[输出比原文件大\]/);
