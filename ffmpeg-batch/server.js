@@ -210,6 +210,14 @@ class SessionWorker {
     for (const t of this.project.tasks) {
       if (!t.template) t.template = {...workflow.LEGACY};
       if (t.status === 'running') { t.status = 'interrupted'; t.error = '上次进程中断；可重新开始（会清理残留的 .partial 文件）'; t.pid = null; }
+      // Do not change completed tasks' recorded command. Refresh only unfinished
+      // planned commands, including tasks restored without a new scan.
+      if (t.status !== 'done' && t.width > 0 && t.height > 0) {
+        const template = workflow.effectiveTemplate(this.project, t);
+        const target = workflow.calculateTarget(t, template, targetSize);
+        t.targetWidth = target.width; t.targetHeight = target.height;
+        t.command = commandFor(t).display;
+      }
     }
     this.activeId = session.id;
     this.persist(); this.persistRegistry();
@@ -289,14 +297,15 @@ class SessionWorker {
     this.note = '项目已设置；点击“扫描视频”获取各文件实际分辨率和转码命令';
   }
   snapshot() {
-    const tasks = this.project?.tasks || [];
+    const tasks = (this.project?.tasks || []).map(t => ({...t, ...workflow.outputSizeComparison(t)}));
+    const outputLargerCount = tasks.filter(t => t.outputLarger).length;
     const counts = { total: tasks.length, pending: 0, running: 0, done: 0, failed: 0, interrupted: 0, probe_failed: 0, conflict: 0 };
     let sourceBytes = 0, outputBytes = 0;
     for (const t of tasks) { counts[t.status] = (counts[t.status] || 0) + 1; sourceBytes += t.bytes || 0; if (t.status === 'done') outputBytes += t.outputBytes || 0; }
     return { configured: !!this.project, id: this.activeId, sessions: this.listSessions(), template: this.project?.template || workflow.EMPTY, source: this.project?.source || '', output: this.project?.output || '',
       activity: this.activity, shouldPause: this.shouldPause, note: this.note,
       scannedAt: this.project?.scanAt || null, scanProgress: this.scanProgress,
-      scanErrors: this.project?.scanErrors || [], counts, sourceBytes, outputBytes, tasks };
+      scanErrors: this.project?.scanErrors || [], counts, sourceBytes, outputBytes, outputLargerCount, tasks };
   }
   async scan() {
     if (!this.project) throw new Error('请先设置源目录');
@@ -499,16 +508,20 @@ class SessionWorker {
     for (const t of this.project.tasks) {
       const dir = path.posix.dirname(t.relative);
       if (dir !== currentDir) { lines.push(`\n[${dir === '.' ? '/' : '/' + dir + '/'}]`); currentDir = dir; }
-      lines.push(`  ${t.relative.split('/').pop()}  [${t.status}] ${t.width || '?'}×${t.height || '?'} → ${t.targetWidth || '?'}×${t.targetHeight || '?'}`);
+      lines.push(`  ${t.relative.split('/').pop()}  [${t.status}] ${t.width || '?'}×${t.height || '?'} → ${t.targetWidth || '?'}×${t.targetHeight || '?'}` +
+        (workflow.outputSizeComparison(t).outputLarger ? '  [输出比原文件大]' : ''));
       if (t.command) lines.push('    ' + t.command);
       if (t.error) lines.push(`    错误：${t.error}`);
     }
     return lines.join('\n') + '\n';
   }
   exportCsv() {
-    const fields = ['relative','status','width','height','targetWidth','targetHeight','sourceCodec','audioCodec','bytes','outputBytes','duration','attempts','startedAt','finishedAt','verifiedAt','input','output','error'];
+    const fields = ['relative','status','width','height','targetWidth','targetHeight','sourceCodec','audioCodec','bytes','outputBytes','outputLarger','sizeDeltaBytes','duration','attempts','startedAt','finishedAt','verifiedAt','input','output','error'];
     const escape = x => `"${String(x ?? '').replace(/"/g, '""')}"`;
-    return '\uFEFF' + fields.join(',') + '\r\n' + (this.project?.tasks || []).map(t => fields.map(k => escape(t[k])).join(',')).join('\r\n') + '\r\n';
+    return '\uFEFF' + fields.join(',') + '\r\n' + (this.project?.tasks || []).map(t => {
+      const record = {...t, ...workflow.outputSizeComparison(t)};
+      return fields.map(k => escape(record[k])).join(',');
+    }).join('\r\n') + '\r\n';
   }
 }
 

@@ -121,3 +121,8 @@
   .compare-controls button{min-width:42px;padding:9px}
   .compare-controls #compare-play-toggle{min-width:57px}
 }
+
+/* Q1-E: an informational warning, not a transcode failure. */
+.size-increase-tag{display:inline-flex;align-items:center;flex:none;padding:2px 7px;border-radius:6px;
+  border:1px solid #cf9753;background:#4a3320;color:#ffe2b6;font-size:11px;font-weight:700}
+:root[data-theme="light"] .size-increase-tag{background:#fff1dc;color:#90520c;border-color:#e6be88}

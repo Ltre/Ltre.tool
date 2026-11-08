@@ -220,4 +220,30 @@ test('真实 Chromium：全工作区克隆、历史任务 DOM 恢复、日志滚
   assert.deepEqual(mediaResult.paused,[true,true,'▶']);
   assert.deepEqual(mediaResult.afterDouble,[16,16]);
   assert.deepEqual(mediaResult.replay,[0,0,true,true,'⏸']);
+  const larger=await devtools.evaluate(`(()=>{
+    const enlarged={id:'grown',relative:'sub/grown.mp4',status:'done',width:160,height:90,
+      targetWidth:160,targetHeight:90,bytes:1000,outputBytes:1500,outputLarger:true,
+      sizeDeltaBytes:500};
+    const ordinary={...enlarged,id:'ordinary',relative:'ordinary.mp4',outputBytes:750,
+      outputLarger:false,sizeDeltaBytes:-250};
+    model={...model,tasks:[enlarged,ordinary],outputLargerCount:1};
+    document.getElementById('filter').value='all';
+    renderSummary(model);
+    renderTree(model);
+    const totalBadges=document.querySelectorAll('.size-increase-tag').length;
+    const summary=document.getElementById('overall-size').textContent;
+    document.getElementById('filter').value='larger';
+    renderTree(model);
+    const filteredRows=document.querySelectorAll('.file-head').length;
+    const filteredBadge=document.querySelector('.size-increase-tag')?.textContent;
+    document.querySelector('.file-head')?.click();
+    const detail=document.querySelector('.file-details')?.textContent || '';
+    return {totalBadges,summary,filteredRows,filteredBadge,
+      hasIncreaseDetail:detail.includes('增加 500 B (+50.0%)')};
+  })()`);
+  assert.equal(larger.totalBadges,1);
+  assert.match(larger.summary,/输出变大 1 个/);
+  assert.equal(larger.filteredRows,1);
+  assert.match(larger.filteredBadge,/输出比原文件大/);
+  assert.equal(larger.hasIncreaseDetail,true,JSON.stringify(larger));
 });

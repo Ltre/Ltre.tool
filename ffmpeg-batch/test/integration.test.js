@@ -39,6 +39,12 @@ test('HTTP: 未应用目录直接扫描、模板覆盖、实际转码、历史�
   assert.equal(r.status,200);
   s=await status();assert.equal(s.tasks[0].targetWidth,128);assert.equal(s.tasks[0].targetHeight,72);
 
+  // Q1-E: endpoint must not emit a no-op -vf when short edge already equals 90.
+  r=await api('/api/template',{videoCodec:'libx264',scaleMode:'shortEdge',shortEdge:90});
+  assert.equal(r.status,200);
+  s=await status();
+  assert.equal(s.tasks[0].targetWidth,160);assert.equal(s.tasks[0].targetHeight,90);
+  assert.ok(!s.tasks[0].command.includes('-vf'),s.tasks[0].command);
   r=await api('/api/template',{videoCodec:'libx264',scaleMode:'percent',percent:80,crf:'23'});assert.equal(r.status,200);
   s=await status();assert.equal(s.tasks[0].targetWidth,128);assert.equal(s.tasks[0].targetHeight,72);
   assert.match(s.tasks[0].command,/\-c:v/);assert.match(s.tasks[0].command,/\-crf/);
@@ -47,6 +53,9 @@ test('HTTP: 未应用目录直接扫描、模板覆盖、实际转码、历史�
   r=await api('/api/start',{});assert.equal(r.status,200);
   s=await waitIdle('transcode');assert.equal(s.tasks[0].status,'done',s.tasks[0].error);
   assert.ok((await stat(s.tasks[0].output)).size>0);
+  assert.equal(s.tasks[0].sizeDeltaBytes,s.tasks[0].outputBytes-s.tasks[0].bytes);
+  assert.equal(s.tasks[0].outputLarger,s.tasks[0].outputBytes>s.tasks[0].bytes);
+  assert.equal(s.outputLargerCount,Number(s.tasks[0].outputLarger));
   let media=await fetch(origin+'/api/video?side=output&id='+encodeURIComponent(fileId),{headers:{Range:'bytes=0-63'}});
   assert.equal(media.status,206);assert.equal((await media.arrayBuffer()).byteLength,64);
   media=await fetch(origin+'/api/video?side=output&id='+encodeURIComponent(fileId),{headers:{'sec-fetch-site':'cross-site'}});
