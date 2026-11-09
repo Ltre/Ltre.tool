@@ -24,7 +24,9 @@ function draftSnapshot(s = {}) {
     source: '', output: '', scannedAt: null, scanProgress: {done: 0, total: 0},
     counts: {total: 0, pending: 0, running: 0, done: 0, failed: 0, interrupted: 0, probe_failed: 0, conflict: 0},
     sourceBytes: 0, outputBytes: 0, tasks: [], sessions: s.sessions || [],
-    template: {videoCodec: '', scaleMode: 'none', percent: 100, crf: ''}
+    template: {videoCodec: '', scaleMode: 'none', percent: 100, crf: ''},
+    templates: [{id:'default',name:'默认模板',template:{videoCodec:'',scaleMode:'none',percent:100,crf:''}}],
+    globalTemplateId:'default'
   };
 }
 function createDraftWorkspace() {
@@ -43,6 +45,7 @@ function createDraftWorkspace() {
   setTemplateForm('tpl', draftSnapshot().template);
   model = draftSnapshot(serverSnapshot || {});
   renderSummary(model);
+  renderBatchTemplateLibrary(model,true);
   renderTree(model);
   renderSessions(serverSnapshot || {sessions:[]});
   $('source').focus();
@@ -147,12 +150,20 @@ function renderSummary(s) {
   setText('setup-msg', draftSession ? '正在创建新任务：应用目录后独立保存，旧任务不受影响' : s.configured ? `任务状态目录：${s.output}` : '尚未配置任务');
   enableControls(s);
 }
+function filterCriteria(status=$('filter').value) {
+  return {status,keyword:$('filter-keyword').value,resolution:$('filter-resolution').value,
+    minPercent:$('filter-size-min').value,maxPercent:$('filter-size-max').value};
+}
 function shouldShow(t, filter) {
-  if (filter === 'all') return true;
-  if (filter === 'larger') return t.status === 'done' && t.outputLarger === true;
-  if (filter === 'pending') return ['pending','interrupted','running'].includes(t.status);
-  if (filter === 'failed') return ['failed','conflict'].includes(t.status);
-  return t.status === filter;
+  return FileFilters.matches(t, filterCriteria(filter));
+}
+function validateSizeRange() {
+  for(const id of ['filter-size-min','filter-size-max']){
+    const element=$(id);
+    const invalid=Number.isNaN(FileFilters.parsePercent(element.value));
+    element.classList.toggle('filter-invalid',invalid);
+    element.title=invalid?'请输入百分比，例如 -5% 或 +50%':'';
+  }
 }
 function buildTree(tasks) {
   const root = { name: '', id: '', dirs: new Map(), files: [] };
@@ -201,8 +212,18 @@ function renderFile(parent, t, depth) {
   const hdr = el('button', 'file-head'); hdr.type='button'; hdr.style.paddingLeft=(12+depth*18)+'px';
   const left = nameBox(t.relative.split('/').pop(), null, false);
   left.firstChild.textContent = openedFiles.has(t.id) ? '▾' : '▸';
-  if (t.override) left.append(el('span','override-tag','独立参数'));
-  if (t.status === 'done' && t.outputLarger) left.append(el('span','size-increase-tag','↑ 输出比原文件大'));
+  if (t.templateScope === 'independent' || t.override && !t.templateScope)
+    left.append(el('span','override-tag','独立参数'));
+  if (t.templateScope === 'local')
+    left.append(el('span','local-template-tag','局部模板'));
+  if (t.status === 'done') {
+    const delta=FileFilters.sizeLabel(t);
+    if(delta) {
+      const label=el('span','size-delta-tag '+delta.state,delta.text);
+      label.title='输出文件相对原文件的体积变化率与增减大小';
+      left.append(label);
+    }
+  }
   hdr.append(left);
   hdr.append(el('span', 'resolution', t.width ? `${t.width}×${t.height} → ${t.targetWidth}×${t.targetHeight}` : '探测失败'));
   const badgeSlot = el('span'); badgeSlot.append(el('span', 'status-pill '+t.status, mapStatus[t.status] || t.status)); hdr.append(badgeSlot);
@@ -270,7 +291,8 @@ function renderTree(s) {
       {top: log.scrollTop, follow});
   }
   container.replaceChildren();
-  const filtered = s.tasks.filter(t => shouldShow(t,$('filter').value));
+  const filter=filterCriteria();
+  const filtered = s.tasks.filter(t => FileFilters.matches(t,filter));
   if (!filtered.length) { container.append(el('div','empty', s.activity === 'scanning' ? `正在探测文件 ${s.scanProgress.done}/${s.scanProgress.total}…` : '没有符合当前筛选条件的视频')); return; }
   const tree=buildTree(filtered); const statMap = fullStats(s.tasks);
   const attach = node => {node.stats = statMap.get(node.id); for (const child of node.dirs.values()) attach(child);};
@@ -303,8 +325,10 @@ async function refresh() {
     }
     model = draftSession ? draftSnapshot(snapshot) : snapshot;
     renderSummary(model);
+    renderBatchTemplateLibrary(model);
     renderSessions(snapshot);
     renderTree(model);
+    if(currentCompareTask)updateCompareNav();
   } catch (e) {setText('connection','连接断开');}
   finally {
     refreshBusy = false;
@@ -342,6 +366,14 @@ function bindWorkspaceControls() {
     if (confirm('完整解码验收需要读取所有已完成视频，可能比较耗时。继续？')) action('/api/verify',{deep:true});
   });
   $('filter').addEventListener('change', () => {if (model) renderTree(model);});
+  $('filter-resolution').addEventListener('change', () => {if (model) renderTree(model);});
+  $('filter-keyword').addEventListener('input', () => {if (model) renderTree(model);});
+  for(const id of ['filter-size-min','filter-size-max']){
+    $(id).addEventListener('input',()=>{
+      validateSizeRange();
+      if(model)renderTree(model);
+    });
+  }
   $('expand').addEventListener('click', () => {closedDirs.clear();if(model)renderTree(model);});
   $('collapse').addEventListener('click', () => {
     if (!model) return;
@@ -353,9 +385,39 @@ function bindWorkspaceControls() {
     $('dialog').classList.remove('hidden');openDir($('source').value.trim() || undefined);
   });
   for (const id of ['tpl-codec','tpl-scale']) $(id).addEventListener('change', () => updateTemplateControls('tpl'));
+  $('tpl-template-select').addEventListener('change',()=>renderBatchTemplateLibrary(model,true));
   $('save-template').addEventListener('click', async () => {
-    try {await request('/api/template',getTemplateForm('tpl'));toast('批量模板已保存');await refresh();}
-    catch(e){toast(e.message);}
+    try{
+      const id=$('tpl-template-select').value;
+      await request('/api/templates/update',{id,name:$('tpl-name').value.trim(),template:getTemplateForm('tpl')});
+      $('tpl-template-select').dataset.loadedId='';
+      await refresh();toast('批量模板已保存');
+    }catch(e){toast(e.message);}
+  });
+  $('tpl-new').addEventListener('click',async()=>{
+    try{
+      const created=await request('/api/templates/create',{template:getTemplateForm('tpl')});
+      await refresh();
+      $('tpl-template-select').value=created.template.id;
+      renderBatchTemplateLibrary(model,true);
+      toast('已创建局部批量模板');
+    }catch(e){toast(e.message);}
+  });
+  $('tpl-global').addEventListener('click',async()=>{
+    if(!confirm('设为全局模板后，将更新采用全局参数的视频。已完成视频如参数变化会标记目标冲突。继续？'))return;
+    try{
+      await request('/api/templates/global',{id:$('tpl-template-select').value});
+      $('tpl-template-select').dataset.loadedId='';
+      await refresh();toast('已切换全局模板');
+    }catch(e){toast(e.message);}
+  });
+  $('tpl-delete').addEventListener('click',async()=>{
+    if(!confirm('删除选中的批量模板？正在被视频引用的局部模板不能删除。'))return;
+    try{
+      await request('/api/templates/delete',{id:$('tpl-template-select').value});
+      $('tpl-template-select').dataset.loadedId='';
+      await refresh();toast('批量模板已删除');
+    }catch(e){toast(e.message);}
   });
 }
 async function openDir(dir) {
