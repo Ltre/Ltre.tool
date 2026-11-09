@@ -230,20 +230,20 @@ test('真实 Chromium：全工作区克隆、历史任务 DOM 恢复、日志滚
     document.getElementById('filter').value='all';
     renderSummary(model);
     renderTree(model);
-    const totalBadges=document.querySelectorAll('.size-increase-tag').length;
+    const totalBadges=document.querySelectorAll('.size-delta-tag').length;
     const summary=document.getElementById('overall-size').textContent;
     document.getElementById('filter').value='larger';
     renderTree(model);
     const filteredRows=document.querySelectorAll('.file-head').length;
-    const filteredBadge=document.querySelector('.size-increase-tag')?.textContent;
+    const filteredBadge=document.querySelector('.size-delta-tag.increased')?.textContent;
     document.querySelector('.file-head')?.click();
     const detail=document.querySelector('.file-details')?.textContent || '';
     return {totalBadges,summary,filteredRows,filteredBadge,
       hasIncreaseDetail:detail.includes('增加 500 B (+50.0%)')};
   })()`);
-  assert.equal(larger.totalBadges,1);
+  assert.equal(larger.totalBadges,2);
   assert.match(larger.summary,/输出变大 1 个/);
   assert.equal(larger.filteredRows,1);
-  assert.match(larger.filteredBadge,/输出比原文件大/);
+  assert.match(larger.filteredBadge,/＋50\.0%\|\+500B/);
   assert.equal(larger.hasIncreaseDetail,true,JSON.stringify(larger));
 });

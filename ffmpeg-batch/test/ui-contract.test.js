@@ -6,11 +6,12 @@ const path=require('node:path');
 const get=p=>fs.readFileSync(path.join(__dirname,'..',p),'utf8');
 test('界面关键控件和脚本入口齐备',()=>{
   const html=get('public/index.html');
-  for(const id of ['theme-select','task-list','new-task','save-template','tpl-codec','tpl-scale','tpl-crf','file-template-dialog','item-inherit','item-width','item-height','compare-dialog','compare-source','compare-output']) {
+  for(const id of ['theme-select','task-list','new-task','save-template','tpl-codec','tpl-scale','tpl-crf','file-template-dialog','tpl-template-select','tpl-name','tpl-new','tpl-global','tpl-delete','item-scope-global','item-scope-local','item-scope-independent','item-local-template','filter-keyword','filter-size-min','filter-size-max','filter-resolution','compare-previous','compare-following','item-width','item-height','compare-dialog','compare-source','compare-output']) {
     assert.match(html,new RegExp('id="'+id+'"'),id);
   }
   assert.match(html,/<script src="\/tree-stats.js"/);
   assert.match(html,/<script src="\/app.js"/);
+  assert.match(html,/<script src="\/file-filters.js"/);
   assert.match(html,/<script src="\/workspace-ui.js"/);
 });
 test('目录汇总、单文件编辑及自动应用目录存在',()=>{
