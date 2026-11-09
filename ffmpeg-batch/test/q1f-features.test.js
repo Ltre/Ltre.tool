@@ -96,6 +96,7 @@ test('Q1-F：删除历史任务仅移除记录和状态，执行中不可删除'
   const source=path.join(root,'source'),output=source+'_output';
   await fsp.mkdir(source);
   const manager=new Manager();
+  const previousCount=manager.listSessions().length;
   manager.configure({source,output});
   const id=manager.activeId;
   const sourceVideo=path.join(source,'keep.mp4'),outputVideo=path.join(output,'keep.mp4');
@@ -105,11 +106,11 @@ test('Q1-F：删除历史任务仅移除记录和状态，执行中不可删除'
   assert.equal(fs.existsSync(state),true);
   manager.current.activity='transcoding';
   assert.throws(()=>manager.deleteSession(id),/正在/);
-  assert.equal(manager.sessions.length,1);
+  assert.equal(manager.sessions.length,previousCount+1);
   manager.current.activity='idle';
   manager.deleteSession(id);
-  assert.equal(manager.snapshot().configured,false);
-  assert.equal(manager.listSessions().length,0);
+  assert.equal(manager.listSessions().length,previousCount);
+  assert.equal(manager.listSessions().some(session=>session.id===id),false);
   assert.equal(fs.existsSync(state),false);
   assert.equal(await fsp.readFile(sourceVideo,'utf8'),'original');
   assert.equal(await fsp.readFile(outputVideo,'utf8'),'converted');
