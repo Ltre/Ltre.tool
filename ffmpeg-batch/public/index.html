@@ -32,10 +32,18 @@
       </section>
 
       <section class="panel template-panel">
-        <div class="section-heading"><div><span class="step">02</span><h2>当前任务 · 批量转码模板</h2></div><span class="subtitle">参数留空即不添加到 FFmpeg 命令</span></div>
-        <div class="template-fields">
+        <div class="section-heading"><div><span class="step">02</span><h2>当前任务 · 批量模板库</h2></div><span class="subtitle">参数留空即不添加到 FFmpeg 命令</span></div>
+        <div class="batch-template-toolbar">
+           <label for="tpl-template-select">当前编辑</label><select id="tpl-template-select" aria-label="选择批量模板"></select>
+           <label for="tpl-name">模板名称</label><input id="tpl-name" maxlength="80" placeholder="模板名称">
+           <button id="tpl-new" type="button" class="secondary">新增模板</button>
+           <button id="tpl-global" type="button" class="secondary">设为全局</button>
+           <button id="tpl-delete" type="button" class="danger">删除模板</button>
+           <span id="tpl-scope-hint" class="hint"></span>
+         </div>
+         <div class="template-fields">
           <div class="field"><label for="tpl-codec">视频编码器（-c:v）</label><select id="tpl-codec">
-            <option value="">不设置</option><option value="libx265">libx265 / H.265</option><option value="libx264">libx264 / H.264</option>
+            <option value="">不设置</option><option value="copy">copy / 复制原视频流</option><option value="libx265">libx265 / H.265</option><option value="libx264">libx264 / H.264</option>
             <option value="libsvtav1">libsvtav1 / AV1</option><option value="hevc_nvenc">hevc_nvenc</option><option value="h264_nvenc">h264_nvenc</option><option value="custom">其他 / 手动填写</option>
           </select><input id="tpl-custom" class="hidden" placeholder="FFmpeg 编码器名称" spellcheck="false"></div>
           <div class="field"><label for="tpl-scale">缩放（-vf scale）</label><select id="tpl-scale"><option value="none">不设置</option><option value="percent">按百分比等比例缩放</option><option value="fraction">按分数等比例缩放</option><option value="shortEdge">以短边 N px 为目标等比例缩放</option><option value="fit720">适配 1280×720（兼容旧任务）</option></select>
@@ -44,7 +52,7 @@
           <div id="tpl-short-edge-wrap" class="scale-detail hidden"><input id="tpl-short-edge" type="number" min="2" max="16384" step="1" value="720" placeholder="目标短边 px"><p class="scale-help">短边设为指定像素数，长边按原始比例精确计算，最终取最接近的偶数；如 1920×1080 → 1280×720，1080×1920 → 720×1280。若源视频短边已等于目标值，则不使用缩放滤镜；奇数短边可能不兼容部分编码器。</p></div></div>
           <div class="field"><label for="tpl-crf">质量参数（-crf）</label><input id="tpl-crf" type="number" min="0" max="63" step="0.1" placeholder="不设置"></div>
         </div>
-        <div class="line-actions"><button id="save-template" class="secondary" type="button">保存批量模板</button><span class="info">单个视频可在目录树展开后覆盖模板，并指定具体宽高。</span></div>
+        <div class="line-actions"><button id="save-template" class="secondary" type="button">保存当前模板</button><span class="info">全局模板只影响未采用局部或独立参数的视频。</span></div>
       </section>
       <section class="panel overview">
         <div class="section-heading"><div><span class="step">03</span><h2>处理队列</h2></div><span class="subtitle" id="last-scan">尚未扫描</span></div>
@@ -68,10 +76,10 @@
       </section>
 
       <section class="panel files">
-        <div class="section-heading"><div><span class="step">04</span><h2>视频目录树</h2></div><div class="toolbar"><select id="filter" aria-label="筛选状态"><option value="all">全部视频</option><option value="pending">待处理</option><option value="done">已完成</option><option value="larger">输出比原文件大</option><option value="failed">失败 / 冲突</option><option value="probe_failed">无法探测</option></select><button id="expand" class="ghost">全部展开</button><button id="collapse" class="ghost">全部折叠</button></div></div>
+        <div class="section-heading"><div><span class="step">04</span><h2>视频目录树</h2></div><div class="toolbar"><input id="filter-keyword" type="search" aria-label="文件名或路径关键字" placeholder="文件名 / 路径关键字"><select id="filter" aria-label="筛选状态"><option value="all">全部视频</option><option value="pending">待处理</option><option value="done">已完成</option><option value="larger">输出比原文件大</option><option value="failed">失败 / 冲突</option><option value="probe_failed">无法探测</option></select><select id="filter-resolution" aria-label="分辨率变化"><option value="all">全部分辨率</option><option value="shrunk">分辨率已缩小</option><option value="same">分辨率不变</option><option value="enlarged">分辨率已放大</option></select><label class="filter-range">体积变化 <input id="filter-size-min" type="text" inputmode="decimal" aria-label="体积变化率下限" placeholder="-5%"></label><span class="range-separator">～</span><input id="filter-size-max" type="text" inputmode="decimal" aria-label="体积变化率上限" placeholder="+50%"><button id="expand" class="ghost">全部展开</button><button id="collapse" class="ghost">全部折叠</button></div></div>
         <div class="tree-header"><span>文件及相对路径</span><span>原始 → 目标分辨率</span><span>处理状态</span><span>进度</span></div>
         <div id="tree" class="tree"><div class="empty">配置源目录并扫描后，将按实际目录层级列出每个视频和对应命令。</div></div>
-        <div class="tree-footer">点击视频行可查看具体的 FFmpeg 命令、输出位置、运行记录及错误原因。输出文件比原文件大时将特别标记，并支持筛选；已完成文件不会重复转码。</div>
+        <div class="tree-footer">点击视频行可查看具体的 FFmpeg 命令、输出位置、运行记录及错误原因。转码完成后显示文件体积增减；可组合使用关键字、分辨率和体积变化率筛选。</div>
       </section>
       <section class="panel export">
         <div><h2>结果与验收报告</h2><p>命令列表按目录层级导出；报告包含源/目标分辨率、源/输出文件大小、输出体积变化、进度、尝试次数、验收结果和失败原因。</p></div>
@@ -88,9 +96,14 @@
   </div>
   <div id="file-template-dialog" class="modal-overlay hidden" role="dialog" aria-modal="true" aria-label="单文件转码设置">
     <div class="modal settings-modal"><div class="modal-top"><h3>单文件模板 · <span id="item-title"></span></h3><button id="close-item-template" class="ghost">关闭 ×</button></div>
-      <div class="modal-content"><label class="inherit"><input id="item-inherit" type="checkbox" checked> 使用当前任务的批量模板</label>
+      <div class="modal-content"><div class="item-scope-options" role="radiogroup" aria-label="单文件参数来源">
+          <label><input id="item-scope-global" type="radio" name="item-scope" value="global" checked> 使用当前任务的全局模板</label>
+          <label><input id="item-scope-local" type="radio" name="item-scope" value="local"> 使用其它批量模板（局部作用域）</label>
+          <select id="item-local-template" aria-label="请选择模板" disabled><option value="">请选择模板</option></select>
+          <label><input id="item-scope-independent" type="radio" name="item-scope" value="independent"> 当前文件独立设置参数</label>
+        </div>
         <fieldset id="item-fields" disabled><div class="template-fields">
-          <div class="field"><label for="item-codec">视频编码器（-c:v）</label><select id="item-codec"><option value="">不设置</option><option value="libx265">libx265</option><option value="libx264">libx264</option><option value="libsvtav1">libsvtav1</option><option value="hevc_nvenc">hevc_nvenc</option><option value="h264_nvenc">h264_nvenc</option><option value="custom">其他 / 手动填写</option></select><input id="item-custom" class="hidden" placeholder="自定义视频编码器"></div>
+          <div class="field"><label for="item-codec">视频编码器（-c:v）</label><select id="item-codec"><option value="">不设置</option><option value="copy">copy / 复制原视频流</option><option value="libx265">libx265</option><option value="libx264">libx264</option><option value="libsvtav1">libsvtav1</option><option value="hevc_nvenc">hevc_nvenc</option><option value="h264_nvenc">h264_nvenc</option><option value="custom">其他 / 手动填写</option></select><input id="item-custom" class="hidden" placeholder="自定义视频编码器"></div>
           <div class="field"><label for="item-scale">缩放（-vf scale）</label><select id="item-scale"><option value="none">不设置</option><option value="percent">百分比缩放</option><option value="fraction">分数等比例缩放</option><option value="shortEdge">短边 N px 等比例缩放</option><option value="exact">指定宽度和高度</option><option value="fit720">适配 1280×720</option></select>
             <div id="item-percent-wrap" class="field-inline hidden"><input id="item-percent" type="number" min="1" max="1000" step="0.1" value="100"><span>%</span></div>
             <div id="item-fraction-wrap" class="scale-detail hidden"><input id="item-fraction" type="text" value="2/3" placeholder="720/1080"><p class="scale-help">填写分子/分母，如 720/1080 或 2/3。按整数分数精确计算，仅最终尺寸取最接近的偶数。</p></div>
@@ -108,11 +121,13 @@
       <div class="compare-hint">两个播放器可独立操作，也可使用下方统一按钮同步播放、暂停与定位。左右方向键：单击 ±2 秒，快速连击 ±8 秒。部分 HEVC、MKV 等格式可能无法在浏览器播放，不代表文件损坏。</div>
       <div class="compare-footer">
         <div class="compare-controls" role="group" aria-label="两个视频统一播放控制">
+           <button type="button" class="secondary" id="compare-previous">上一个</button>
           <button type="button" class="secondary" id="compare-back-8" aria-label="两个视频后退8秒">−8</button>
           <button type="button" class="secondary" id="compare-back-2" aria-label="两个视频后退2秒">−2</button>
           <button type="button" class="primary" id="compare-play-toggle" aria-label="两个视频同步播放" aria-pressed="false">▶</button>
           <button type="button" class="secondary" id="compare-next-2" aria-label="两个视频前进2秒">+2</button>
           <button type="button" class="secondary" id="compare-next-8" aria-label="两个视频前进8秒">+8</button>
+           <button type="button" class="secondary" id="compare-following">下一个</button>
         </div>
         <span id="compare-sync-state" role="status" aria-live="polite">两个视频已就绪</span>
       </div>
@@ -121,7 +136,8 @@
   <script src="/tree-stats.js" defer></script>
   <script src="/workspace-dom.js" defer></script>
   <script src="/compare-sync.js" defer></script>
-  <script src="/app.js" defer></script>
+  <script src="/file-filters.js" defer></script>
+   <script src="/app.js" defer></script>
   <script src="/workspace-ui.js" defer></script>
 </body>
 </html>
