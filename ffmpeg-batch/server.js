@@ -207,6 +207,7 @@ class SessionWorker {
       ? old : { version: 2, id: session.id, source, output, createdAt: now(), scanAt: null, template: {...workflow.EMPTY}, tasks: [], scanErrors: [] };
     this.project.id = session.id;
     if (!this.project.template) this.project.template = {...workflow.LEGACY};
+    workflow.ensureTemplateLibrary(this.project);
     for (const t of this.project.tasks) {
       if (!t.template) t.template = {...workflow.LEGACY};
       if (t.status === 'running') { t.status = 'interrupted'; t.error = '上次进程中断；可重新开始（会清理残留的 .partial 文件）'; t.pid = null; }
@@ -258,21 +259,97 @@ class SessionWorker {
       } else if (t.status !== 'probe_failed') {t.status = 'pending'; t.error = '';}
     }
   }
-  saveTemplate(template) {
+  requireTemplateEdit() {
     if (!this.project) throw new Error('请先创建任务');
     if (this.activity !== 'idle') throw new Error('处理期间不可修改模板');
-    this.project.template = workflow.normalizeTemplate(template, false, true);
-    for (const t of this.project.tasks) this.refreshTemplate(t);
-    this.persist(); this.note = '已保存当前任务的批量转码模板';
+    workflow.ensureTemplateLibrary(this.project);
   }
-  saveItemTemplate(id, override) {
-    if (!this.project) throw new Error('请先创建任务');
-    if (this.activity !== 'idle') throw new Error('处理期间不可修改模板');
+  templateEntry(id) {
+    const entry = this.project.templates.find(t => t.id === id);
+    if (!entry) throw new Error('指定的批量模板不存在');
+    return entry;
+  }
+  validateTemplateName(name, id = null) {
+    if (!name || name.length > 80) throw new Error('模板名称长度应为 1～80 字');
+    if (this.project.templates.some(t => t.name === name && t.id !== id)) throw new Error('批量模板名称不能重复');
+  }
+  saveTemplate(template) {
+    // Backward-compatible API: update the active global template.
+    this.requireTemplateEdit();
+    const entry = this.templateEntry(this.project.globalTemplateId);
+    entry.template = workflow.normalizeTemplate(template, false, true);
+    this.project.template = entry.template;
+    for (const t of this.project.tasks) if (t.templateScope === 'global') this.refreshTemplate(t);
+    this.persist(); this.note = '已保存全局批量模板';
+  }
+  createBatchTemplate({name, template} = {}) {
+    this.requireTemplateEdit();
+    const label = name == null || !String(name).trim()
+      ? (() => {let n=1;while(this.project.templates.some(t=>t.name==='新模板 '+n))n++;return '新模板 '+n;})()
+      : String(name).trim();
+    this.validateTemplateName(label);
+    const entry = {id:randomUUID(),name:label,
+      template:workflow.normalizeTemplate(template || this.project.template, false, true)};
+    this.project.templates.push(entry);
+    this.persist(); this.note = '已创建批量模板';
+    return entry;
+  }
+  updateBatchTemplate({id, name, template} = {}) {
+    this.requireTemplateEdit();
+    const entry = this.templateEntry(id);
+    const label = String(name || '').trim();
+    this.validateTemplateName(label,id);
+    const normalized = workflow.normalizeTemplate(template,false,true);
+    entry.name = label; entry.template = normalized;
+    if (id === this.project.globalTemplateId) this.project.template = normalized;
+    for (const t of this.project.tasks) {
+      if ((t.templateScope === 'global' && id === this.project.globalTemplateId) ||
+          (t.templateScope === 'local' && t.localTemplateId === id)) this.refreshTemplate(t);
+    }
+    this.persist(); this.note = '已保存批量模板';
+  }
+  setGlobalBatchTemplate(id) {
+    this.requireTemplateEdit();
+    const entry = this.templateEntry(id);
+    if (this.project.globalTemplateId === id) return;
+    // Preserve pre-existing local references if their template is promoted to global.
+    const bound = this.project.tasks.filter(t => t.templateScope === 'local' && t.localTemplateId === id);
+    if (bound.length) {
+      const copy = {id:randomUUID(),name:entry.name + '（局部保留）',template:{...entry.template}};
+      let n=2;
+      while(this.project.templates.some(t=>t.name===copy.name))copy.name=entry.name+'（局部保留 '+n+++'）';
+      this.project.templates.push(copy);
+      for(const t of bound)t.localTemplateId=copy.id;
+    }
+    this.project.globalTemplateId = id; this.project.template = entry.template;
+    for (const t of this.project.tasks) if (t.templateScope === 'global') this.refreshTemplate(t);
+    this.persist(); this.note = '已切换全局批量模板';
+  }
+  deleteBatchTemplate(id) {
+    this.requireTemplateEdit();this.templateEntry(id);
+    if (id === this.project.globalTemplateId) throw new Error('不能删除当前全局模板，请先设置其它全局模板');
+    if (this.project.tasks.some(t => t.templateScope === 'local' && t.localTemplateId === id)) {
+      throw new Error('有视频正在使用该局部模板，请先重新指定这些视频的参数来源');
+    }
+    this.project.templates = this.project.templates.filter(t => t.id !== id);
+    this.persist(); this.note = '已删除未被使用的批量模板';
+  }
+  saveItemTemplate(id, selection) {
+    this.requireTemplateEdit();
     const t = this.project.tasks.find(t => t.id === id);
     if (!t) throw new Error('未找到该视频');
-    t.override = override == null ? null : workflow.normalizeTemplate(override, true, true);
-    this.refreshTemplate(t); this.persist();
-    this.note = '已更新该视频的转码模板';
+    if (selection == null || selection?.mode === 'global') {
+      t.templateScope = 'global'; t.override = null; t.localTemplateId = null;
+    } else if (selection?.mode === 'local') {
+      const entry = this.templateEntry(selection.templateId);
+      if (entry.id === this.project.globalTemplateId) throw new Error('局部作用域请选择其它批量模板');
+      t.templateScope = 'local'; t.localTemplateId = entry.id; t.override = null;
+    } else {
+      const override = selection?.mode === 'independent' ? selection.template : selection;
+      t.override = workflow.normalizeTemplate(override,true,true);
+      t.templateScope = 'independent'; t.localTemplateId = null;
+    }
+    this.refreshTemplate(t); this.persist(); this.note = '已更新该视频的参数来源';
   }
   configure(input) {
     if (this.activity !== 'idle') throw new Error('扫描、转码或验收进行中，不能切换项目');
@@ -302,7 +379,8 @@ class SessionWorker {
     const counts = { total: tasks.length, pending: 0, running: 0, done: 0, failed: 0, interrupted: 0, probe_failed: 0, conflict: 0 };
     let sourceBytes = 0, outputBytes = 0;
     for (const t of tasks) { counts[t.status] = (counts[t.status] || 0) + 1; sourceBytes += t.bytes || 0; if (t.status === 'done') outputBytes += t.outputBytes || 0; }
-    return { configured: !!this.project, id: this.activeId, sessions: this.listSessions(), template: this.project?.template || workflow.EMPTY, source: this.project?.source || '', output: this.project?.output || '',
+    return { configured: !!this.project, id: this.activeId, sessions: this.listSessions(), template: this.project?.template || workflow.EMPTY,
+      templates: this.project?.templates || [], globalTemplateId: this.project?.globalTemplateId || null, source: this.project?.source || '', output: this.project?.output || '',
       activity: this.activity, shouldPause: this.shouldPause, note: this.note,
       scannedAt: this.project?.scanAt || null, scanProgress: this.scanProgress,
       scanErrors: this.project?.scanErrors || [], counts, sourceBytes, outputBytes, outputLargerCount, tasks };
@@ -358,6 +436,7 @@ class SessionWorker {
               bytes: st.size, mtimeMs: st.mtimeMs, width: meta.width, height: meta.height,
               rotation: meta.rotation, targetWidth: target.width, targetHeight: target.height,
               template, templateKey, override: old?.override || null,
+              templateScope: old?.templateScope || (old?.override ? 'independent' : 'global'), localTemplateId: old?.localTemplateId || null,
               sourceCodec: meta.codec, audioCodec: meta.audioCodec, duration: meta.duration,
               status: status === 'probe_failed' ? 'pending' : status,
               error: unchanged && status !== 'pending' ? (old.error || '') : '',
@@ -600,6 +679,29 @@ class Manager {
     this.persistRegistry();
     atomicJson(CONFIG_FILE, {source, output});
   }
+  deleteSession(id) {
+    const session = this.sessions.find(s => s.id === id);
+    if (!session) throw new Error('任务不存在');
+    const worker = this.workers.get(id);
+    if (worker && worker.activity !== 'idle') throw new Error('任务正在扫描、转码或验收，请先停止后再删除');
+    const stateFile = path.join(session.output, STATE_FILE);
+    const recorded = readJson(stateFile);
+    if (recorded && recorded.source === session.source && recorded.output === session.output) {
+      fs.rmSync(stateFile, {force:true});
+    }
+    // Only the manager record/state is deleted, never the input or output videos.
+    this.workers.delete(id);
+    this.sessions = this.sessions.filter(s => s.id !== id);
+    if (this.activeId === id) {
+      this.activeId = null;
+      if (this.sessions.length) this.selectSession(this.sessions[0].id);
+      else {
+        fs.rmSync(CONFIG_FILE, {force:true});
+        this.recoveryNote = '任务已删除；视频文件及输出目录均未删除';
+      }
+    }
+    this.persistRegistry();
+  }
   listSessions() {
     return this.sessions.map(s => {
       const worker = this.workers.get(s.id);
@@ -613,7 +715,7 @@ class Manager {
   }
   snapshot() {
     const worker = this.current;
-    const state = worker ? worker.snapshot() : {configured:false,id:null,source:'',output:'',template:workflow.EMPTY,
+    const state = worker ? worker.snapshot() : {configured:false,id:null,source:'',output:'',template:workflow.EMPTY,templates:[],globalTemplateId:null,
       activity:'idle',shouldPause:false,note:this.recoveryNote || '',scannedAt:null,
       scanProgress:{done:0,total:0},scanErrors:[],counts:{total:0,pending:0,running:0,done:0,failed:0,interrupted:0,probe_failed:0,conflict:0},
       sourceBytes:0,outputBytes:0,tasks:[]};
@@ -626,6 +728,10 @@ class Manager {
   verify(options){return this.requireCurrent().verify(options);}
   resetFailed(){return this.requireCurrent().resetFailed();}
   saveTemplate(template){return this.requireCurrent().saveTemplate(template);}
+  createBatchTemplate(body){return this.requireCurrent().createBatchTemplate(body);}
+  updateBatchTemplate(body){return this.requireCurrent().updateBatchTemplate(body);}
+  setGlobalBatchTemplate(id){return this.requireCurrent().setGlobalBatchTemplate(id);}
+  deleteBatchTemplate(id){return this.requireCurrent().deleteBatchTemplate(id);}
   saveItemTemplate(id,template){return this.requireCurrent().saveItemTemplate(id,template);}
   exportCommands(){return this.requireCurrent().exportCommands();}
   exportCsv(){return this.requireCurrent().exportCsv();}
@@ -686,11 +792,17 @@ const server = http.createServer(async (req, res) => {
       let raw = '';
       for await (const chunk of req) { raw += chunk.toString(); if (raw.length > MAX_JSON) throw new Error('请求体过大'); }
       const body = raw ? JSON.parse(raw) : {};
+      let createdTemplate = null;
       switch (url.pathname) {
         case '/api/config': manager.configure(body); break;
         case '/api/sessions/select': manager.selectSession(body.id); break;
+        case '/api/sessions/delete': manager.deleteSession(body.id); break;
         case '/api/template': manager.saveTemplate(body); break;
-        case '/api/template/item': manager.saveItemTemplate(body.id, body.override); break;
+        case '/api/templates/create': createdTemplate = manager.createBatchTemplate(body); break;
+        case '/api/templates/update': manager.updateBatchTemplate(body); break;
+        case '/api/templates/global': manager.setGlobalBatchTemplate(body.id); break;
+        case '/api/templates/delete': manager.deleteBatchTemplate(body.id); break;
+        case '/api/template/item': manager.saveItemTemplate(body.id, body.selection === undefined ? body.override : body.selection); break;
         case '/api/scan': {
           if (body.source && (path.resolve(body.source) !== manager.project?.source ||
             (body.output && path.resolve(body.output) !== manager.project?.output))) manager.configure(body);
@@ -716,7 +828,7 @@ const server = http.createServer(async (req, res) => {
         }
         default: return json(res, 404, { error: '不存在的接口' });
       }
-      return json(res, 200, { ok: true, note: manager.note });
+      return json(res, 200, { ok: true, note: manager.note, ...(createdTemplate ? {template:createdTemplate} : {}) });
     }
     if (req.method !== 'GET' && req.method !== 'HEAD') return json(res, 405, { error: '不支持该方法' });
     const pathname = url.pathname === '/' ? '/index.html' : url.pathname;

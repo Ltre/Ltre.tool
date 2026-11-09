@@ -45,10 +45,33 @@ function normalizeTemplate(input = {}, allowExact = false, allowLegacy = false) 
     result.width = width; result.height = height;
   }
   if (videoCodec === 'copy' && scaleMode !== 'none') throw new Error('视频流复制无法同时使用缩放滤镜');
+  if (videoCodec === 'copy' && crf) throw new Error('视频流复制无法使用 CRF 质量参数');
   return result;
 }
+function ensureTemplateLibrary(project) {
+  if (!project) return;
+  if (!Array.isArray(project.templates) || !project.templates.length) {
+    project.templates = [{id:'default',name:'默认模板',
+      template:normalizeTemplate(project.template || LEGACY, false, true)}];
+    project.globalTemplateId = 'default';
+  }
+  if (!project.templates.some(t => t.id === project.globalTemplateId)) project.globalTemplateId = project.templates[0].id;
+  project.template = project.templates.find(t => t.id === project.globalTemplateId).template;
+  for (const task of project.tasks || []) {
+    if (!task.templateScope) task.templateScope = task.override ? 'independent' : 'global';
+  }
+}
 function effectiveTemplate(project, task) {
-  return normalizeTemplate(task?.override || project?.template || EMPTY, true, true);
+  if (task?.templateScope === 'independent' || (!task?.templateScope && task?.override)) {
+    return normalizeTemplate(task.override || EMPTY, true, true);
+  }
+  if (task?.templateScope === 'local') {
+    const entry = project?.templates?.find(t => t.id === task.localTemplateId);
+    if (!entry) throw new Error('单文件引用的局部模板不存在，请重新指定模板');
+    return normalizeTemplate(entry.template, true, true);
+  }
+  const entry = project?.templates?.find(t => t.id === project.globalTemplateId);
+  return normalizeTemplate(entry?.template || project?.template || EMPTY, true, true);
 }
 function calculateTarget(meta, template, fit720) {
   if (!(meta.width > 0 && meta.height > 0)) throw new Error('无效源分辨率');
@@ -154,4 +177,4 @@ async function serveVideo(req, res, url, project) {
   res.on('close', () => stream.destroy());
   stream.pipe(res);
 }
-module.exports = {LEGACY, EMPTY, normalizeTemplate, normalizeFraction, effectiveTemplate, calculateTarget, commandArgs, outputSizeComparison, expectedCodec, serveVideo, within};
+module.exports = {LEGACY, EMPTY, normalizeTemplate, normalizeFraction, ensureTemplateLibrary, effectiveTemplate, calculateTarget, commandArgs, outputSizeComparison, expectedCodec, serveVideo, within};
