@@ -5,7 +5,7 @@ const {mkdtemp, mkdir, writeFile, rm, symlink} = require('node:fs/promises');
 const http = require('node:http');
 const os = require('node:os');
 const path = require('node:path');
-const {LEGACY, EMPTY, normalizeTemplate, calculateTarget, commandArgs, expectedCodec, serveVideo} = require('../workflow');
+const {LEGACY, EMPTY, normalizeTemplate, calculateTarget, commandArgs, outputSizeComparison, expectedCodec, serveVideo} = require('../workflow');
 const {summarize} = require('../public/tree-stats');
 
 test('新任务参数为空时确实省略编码器、缩放、CRF', () => {
@@ -93,4 +93,29 @@ test('短边缩放：横屏、竖屏、方形及奇数目标短边', () => {
   const odd=normalizeTemplate({scaleMode:'shortEdge',shortEdge:719});
   assert.equal(calculateTarget({width:1080,height:1920},odd,()=>{}).width,719);
   for(const n of [0,1,-20,1.5,16385,'nope'])assert.throws(()=>normalizeTemplate({scaleMode:'shortEdge',shortEdge:n}),/目标短边/);
+});
+
+test('Q1-E：短边正好等于 N 时完全省略缩放滤镜并保持原始像素', () => {
+  for (const [width,height,N] of [[1280,720,720],[720,1280,720],[720,720,720],[1281,719,719],[719,1281,719]]) {
+    const template=normalizeTemplate({videoCodec:'libx265',scaleMode:'shortEdge',shortEdge:N});
+    const t={input:'source.mp4',temporary:'output.partial.mp4',width,height,template};
+    const target=calculateTarget(t,template,()=>{throw Error('不应调用 legacy fit');});
+    assert.deepEqual(target,{width,height});
+    const args=commandArgs({...t,targetWidth:target.width,targetHeight:target.height});
+    assert.ok(!args.includes('-vf'),`${width}x${height} 不应添加 -vf`);
+    assert.ok(!args.some(arg=>String(arg).startsWith('scale=')));
+    assert.ok(args.includes('libx265'),'其余视频编码参数应保留');
+  }
+  const changed=normalizeTemplate({scaleMode:'shortEdge',shortEdge:720});
+  const args=commandArgs({input:'a',temporary:'b',width:1920,height:1080,
+    template:changed,targetWidth:1280,targetHeight:720});
+  assert.deepEqual(args.slice(0,6),['-i','a','-movflags','+faststart','-vf','scale=1280:720']);
+});
+test('Q1-E：仅验收通过且有有效字节数时计算体积变化；大小相等不标记',()=>{
+  for(const [status,bytes,outputBytes,larger,delta] of [
+    ['done',100,101,true,1],['done',100,99,false,-1],['done',100,100,false,0],
+    ['pending',100,200,false,null],['failed',100,200,false,null],
+    ['done',100,null,false,null],['done',0,500,false,null],['done',100,0,false,null]
+  ])assert.deepEqual(outputSizeComparison({status,bytes,outputBytes}),
+    {outputLarger:larger,sizeDeltaBytes:delta});
 });

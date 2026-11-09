@@ -127,7 +127,8 @@ function renderSummary(s) {
   $('overall-progress').style.width = weighted.toFixed(2) + '%';
   setText('overall-progress-text', active ? `当前转码：${active.relative} · ${(active.progress || 0).toFixed(1)}% · ${active.speed || '计算速度中'}` : `全部视频进度：${percent.toFixed(1)}%`);
   const saving = s.outputBytes && s.sourceBytes ? ` · 已完成文件压缩率 ${Math.round((1-s.outputBytes / Math.max(1, s.tasks.filter(t => t.status === 'done').reduce((n,t) => n+t.bytes,0))) *100)}%` : '';
-  setText('overall-size', `${fmtBytes(s.sourceBytes)} 源数据${saving}`);
+  const enlarged = s.outputLargerCount ? ` · 输出变大 ${s.outputLargerCount} 个` : '';
+  setText('overall-size', `${fmtBytes(s.sourceBytes)} 源数据${saving}${enlarged}`);
   setText('status-note', s.note || '就绪');
   const exports = { 'export-cmd': '/api/export/commands', 'export-csv': '/api/export/report.csv',
     'export-json': '/api/export/report.json' };
@@ -148,6 +149,7 @@ function renderSummary(s) {
 }
 function shouldShow(t, filter) {
   if (filter === 'all') return true;
+  if (filter === 'larger') return t.status === 'done' && t.outputLarger === true;
   if (filter === 'pending') return ['pending','interrupted','running'].includes(t.status);
   if (filter === 'failed') return ['failed','conflict'].includes(t.status);
   return t.status === filter;
@@ -200,6 +202,7 @@ function renderFile(parent, t, depth) {
   const left = nameBox(t.relative.split('/').pop(), null, false);
   left.firstChild.textContent = openedFiles.has(t.id) ? '▾' : '▸';
   if (t.override) left.append(el('span','override-tag','独立参数'));
+  if (t.status === 'done' && t.outputLarger) left.append(el('span','size-increase-tag','↑ 输出比原文件大'));
   hdr.append(left);
   hdr.append(el('span', 'resolution', t.width ? `${t.width}×${t.height} → ${t.targetWidth}×${t.targetHeight}` : '探测失败'));
   const badgeSlot = el('span'); badgeSlot.append(el('span', 'status-pill '+t.status, mapStatus[t.status] || t.status)); hdr.append(badgeSlot);
@@ -217,7 +220,16 @@ function renderFile(parent, t, depth) {
     meta.append(detailRow('相对路径', t.relative), detailRow('原始视频', `${t.width || '?'}×${t.height || '?'} · ${t.sourceCodec || '?'} · ${fmtBytes(t.bytes)}`),
       detailRow('孪生输出', t.output), detailRow('目标尺寸 / 音频', `${t.targetWidth || '?'}×${t.targetHeight || '?'} · ${t.audioCodec ? t.audioCodec + ' copy' : '无音频'}`),
       detailRow('源视频时长', fmtDuration(t.duration)), detailRow('任务', `${mapStatus[t.status] || t.status} · 重试次数 ${t.attempts || 0} · ${t.speed || ''}`));
-    if (t.status === 'done') meta.append(detailRow('完成输出', `${fmtBytes(t.outputBytes)} · 最近验收 ${t.verifiedAt ? new Date(t.verifiedAt).toLocaleString() : '未记录'}`));
+    if (t.status === 'done') {
+      meta.append(detailRow('完成输出', `${fmtBytes(t.outputBytes)} · 最近验收 ${t.verifiedAt ? new Date(t.verifiedAt).toLocaleString() : '未记录'}`));
+      if (t.sizeDeltaBytes != null) {
+        const delta = t.sizeDeltaBytes;
+        const percent = (Math.abs(delta) / t.bytes * 100).toFixed(1);
+        const summary = delta > 0 ? `增加 ${fmtBytes(delta)} (+${percent}%)` :
+          delta < 0 ? `减少 ${fmtBytes(-delta)} (-${percent}%)` : '无变化';
+        meta.append(detailRow('输出体积变化', summary));
+      }
+    }
     info.append(meta);
     const tools = el('div','file-tools');
     const editBtn = el('button','secondary','单独设置转码参数');

@@ -272,3 +272,42 @@
 ### 提交记录
 
 - `0e9499becbe14b54b808a514cdb299869e39f480`：修复双视频末尾重播，并增加单元测试和 Chromium 交互回归。
+
+---
+
+## Q1-E — 2026-11-08：短边等值跳过缩放、标记输出体积增长
+
+### 需求与实现顺序
+
+1. 先修正短边缩放的目标尺寸计算和 FFmpeg 命令生成，确保两者一致，避免省略滤镜后验收失败。
+2. 在已有 `bytes`（源文件）和 `outputBytes`（验收通过的输出）基础上统一计算体积差异；不增加重复持久化字段，保证既有历史完成任务自动兼容。
+3. 再扩展队列统计、目录树醒目标记/筛选、文件详情和 CSV/JSON/命令导出；最后追加单元、HTTP/真实 FFmpeg 集成、历史恢复和 Chromium 页面测试。
+
+### 问题根因
+
+- 原 `workflow.calculateTarget()` 的 `shortEdge` 分支不区分「源短边本来已经等于 N」，总是计算长边并按偶数取整；对奇数宽高，可能连本不需缩放的分辨率都改变。
+- 原 `workflow.commandArgs()` 只判断 `scaleMode !== 'none'`，不管输入/目标大小是否相同，始终添加 `-vf scale=宽:高`，产生无意义的滤镜处理。
+- 源文件字节数与输出字节数已被扫描与验收流程记录，但缺少「输出更大」的统一判定、可见标记、筛选和报告字段。
+
+### 具体修改
+
+- `workflow.js`：若原短边 `Math.min(width,height) === shortEdge`，直接返回原始宽高，且执行参数中不加入 `-vf scale`。非等值时仍按照原来的长边等比例及偶数取整规则，视频编码、质量、音频复制、`+faststart` 均保持原样。
+- `server.js`：恢复历史任务时仅重新计算**尚未完成**视频的预设尺寸和命令，不修改已完成视频的实际命令记录。增加 `outputSizeComparison()`：只有 `status === 'done'` 且源/输出均有有效正整数字节数时，`outputLarger = outputBytes > bytes`，`sizeDeltaBytes = outputBytes - bytes`；否则标记 false、差值 null。
+- 接口 `/api/status`、JSON 导出：按快照派生每条任务的 `outputLarger` / `sizeDeltaBytes` 和总计 `outputLargerCount`；无需修改历史状态数据文件。CSV 报告增加 `outputLarger`、`sizeDeltaBytes` 两列；命令列表对输出增大的文件加上文字标识。
+- `public/app.js`、`index.html`、`workspace.css`：目录树已完成文件行显示「↑ 输出比原文件大」提醒，文件详情显示体积增减字节数及百分比，新增「输出比原文件大」筛选；处理队列原有体积摘要增加增大文件个数，不改变已有五项状态指标和任务隔离逻辑。表单帮助文字与 README 同步更新。
+
+### 实际测试与问题处理
+
+- `test/workflow.test.js`：横屏、竖屏、正方形、奇数宽高原短边等于 N 的场景确认不添加 `-vf`；短边不等于 N 时仍生成缩放命令；测试输出变大、变小、相同、失败、未完成及无效大小时的比较行为。
+- `test/integration.test.js`：实际 HTTP 配置与 ffprobe 扫描确认 `160×90`、N=90 不生成缩放参数，随后完成真实 FFmpeg 转码和验收，核对输出体积统计。
+- `test/size-report.test.js`：保存/恢复历史任务，验证无需更改原始状态文件即可得到正确 API 统计、CSV/命令列表/JSON 增大标记；未处理奇数短边视频重启后命令也会刷新为无缩放参数。
+- `test/browser-ui.test.js`：用真实 Headless Chromium 打开页面，检查变大标签、队列摘要、目录树筛选以及点击行展开后的增量百分比文案。
+- 首次 CI [42492172285](https://github.com/Ltre/Ltre.tool/actions/runs/42492172285) 为 **40/41**：唯一失败是新增测试错误地要求 CSV **表头**带引号；原程序本来只给**数据字段**加引号。保持现有 CSV 格式不变，修正测试假设后重新运行。
+- 最终 GitHub Actions [42492323368](https://github.com/Ltre/Ltre.tool/actions/runs/42492323368) 通过 `npm run check:syntax` 与 `npm test`：**41 项通过、0 失败、0 跳过**，包括实际 FFmpeg / FFprobe、历史任务恢复、文件 Range 与 Chromium 页面交互。
+- 浏览器测试中视频媒体解码使用既有模拟控制；本轮验证重点是转码命令、文件字节统计与页面标记，没有将任意 HEVC/MKV 的实际浏览器解码兼容性算作通过。
+
+### 开发提交
+
+- `8d06ed5f37d7b87bb89d7f09b7212767beb9f1df`：两项功能的整体实现，以及配套单元/集成/Chromium 测试。
+- `7935458c7e29807b8fa21530860e8fb600ddcbfd`：按既有 CSV 契约修正新增测试的表头断言。
+- 以下整体验收 Git title/description 建议仅在最终答复提供，不作为实际 Git 提交消息使用。

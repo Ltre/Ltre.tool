@@ -61,6 +61,8 @@ function calculateTarget(meta, template, fit720) {
     }
     case 'shortEdge': {
       const short = Math.min(meta.width, meta.height);
+      // An unchanged short edge needs no filter; keep even an odd long edge exact.
+      if (short === template.shortEdge) return {width: meta.width, height: meta.height};
       const scale = BigInt(template.shortEdge), base = BigInt(short);
       // The user-specified short edge remains exact, including odd pixel values.
       return {width: meta.width === short ? template.shortEdge : roundEvenRatio(meta.width, scale, base),
@@ -78,10 +80,21 @@ function commandArgs(t) {
   const args = ['-i', t.input];
   if (template.videoCodec) args.push('-c:v', template.videoCodec);
   args.push('-movflags', '+faststart');
-  if (template.scaleMode !== 'none') args.push('-vf', `scale=${t.targetWidth}:${t.targetHeight}`);
+  const unchangedShortEdge = template.scaleMode === 'shortEdge' &&
+    Number.isFinite(t.width) && Number.isFinite(t.height) &&
+    Math.min(t.width, t.height) === template.shortEdge;
+  if (template.scaleMode !== 'none' && !unchangedShortEdge) args.push('-vf', `scale=${t.targetWidth}:${t.targetHeight}`);
   if (template.crf) args.push('-crf', template.crf);
   args.push('-c:a', 'copy', t.temporary);
   return args;
+}
+function outputSizeComparison(t) {
+  if (t.status !== 'done' || !Number.isSafeInteger(t.bytes) || t.bytes <= 0 ||
+      !Number.isSafeInteger(t.outputBytes) || t.outputBytes <= 0) {
+    return {outputLarger: false, sizeDeltaBytes: null};
+  }
+  const sizeDeltaBytes = t.outputBytes - t.bytes;
+  return {outputLarger: sizeDeltaBytes > 0, sizeDeltaBytes};
 }
 function expectedCodec(t) {
   const codec = (t.template || LEGACY).videoCodec;
@@ -141,4 +154,4 @@ async function serveVideo(req, res, url, project) {
   res.on('close', () => stream.destroy());
   stream.pipe(res);
 }
-module.exports = {LEGACY, EMPTY, normalizeTemplate, normalizeFraction, effectiveTemplate, calculateTarget, commandArgs, expectedCodec, serveVideo, within};
+module.exports = {LEGACY, EMPTY, normalizeTemplate, normalizeFraction, effectiveTemplate, calculateTarget, commandArgs, outputSizeComparison, expectedCodec, serveVideo, within};
