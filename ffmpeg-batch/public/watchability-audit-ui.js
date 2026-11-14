@@ -101,6 +101,10 @@ async function watchabilitySeek(video, target, run, label) {
     }
     let lastStatus = 0;
     while (!seeked && Date.now() < deadline && !run.stopped && !video.error) {
+      if (!video.seeking && Math.abs(video.currentTime - bounded) < 0.08) {
+        seeked = true;
+        break;
+      }
       if (Date.now() - lastStatus >= 500) {
         watchabilityProgress(run, '正在等待' + (label || '视频') + '完成定位');
         lastStatus = Date.now();
@@ -537,6 +541,13 @@ async function startWatchabilityAudit(overrides = {}) {
                   });
                   watchabilityPauseVideos(run);
                   if (run.stopped) break;
+                  if (!playbackCompleted && !source.error && !output.error) {
+                    watchabilityPointStatus(point,'UNVERIFIED','两路视频未完成完整播放窗口，无法取得可靠的连续播放证据');
+                    unverified = true;
+                    run.pointProgress = 1;
+                    watchabilityProgress(run, '第 ' + point.index + ' 点无法判定');
+                    continue;
+                  }
 
                   point.sourceAdvance = Number((source.currentTime-sourceStart).toFixed(3));
                   point.outputAdvance = Number((output.currentTime-outputStart).toFixed(3));
@@ -553,6 +564,14 @@ async function startWatchabilityAudit(overrides = {}) {
                     }
                     run.pointProgress = 1;
                     watchabilityProgress(run, '第 ' + point.index + ' 点检测结束');
+                    continue;
+                  }
+                  if (source.error) {
+                    watchabilityPointStatus(point,'UNVERIFIED','原视频播放期间出现媒体错误，无法作为画面对比基准：' +
+                      watchabilityMediaError(source));
+                    unverified = true;
+                    run.pointProgress = 1;
+                    watchabilityProgress(run, '第 ' + point.index + ' 点无法判定');
                     continue;
                   }
                   if (point.sourceAdvance < minAdvance ||
