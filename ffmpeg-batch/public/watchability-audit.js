@@ -94,7 +94,15 @@
       surface.context.drawImage(video, x, y, drawWidth, drawHeight);
       return surface.context.getImageData(0, 0, width, height).data;
     }
+    function captureFrame(video) {
+      const surface=makeSurface();
+      const data=new Uint8ClampedArray(capture(video,surface));
+      surface.canvas.width=0;surface.canvas.height=0;
+      return data;
+    }
     return {
+      captureFrame,
+      compareFrames(leftFrame,rightFrame) { return compareFrameData(leftFrame,rightFrame,settings); },
       compare(source, output) {
         const sourceRatio = source.videoWidth / source.videoHeight;
         const outputRatio = output.videoWidth / output.videoHeight;

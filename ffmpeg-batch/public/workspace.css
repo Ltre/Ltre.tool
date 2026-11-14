@@ -202,3 +202,29 @@
   .watchability-table th,.watchability-table td{padding:7px 5px}
   .watchability-table td:first-child{min-width:130px}
 }
+
+.watchability-history{margin-top:16px;padding-top:14px;border-top:1px solid var(--border)}
+.watchability-history-heading{display:flex;align-items:center;justify-content:space-between;gap:10px}
+.watchability-history-heading strong{font-size:13px}
+.watchability-history-list{display:grid;gap:8px;margin-top:10px}
+.watchability-history-empty{margin:0;color:var(--sub);font-size:12px}
+.watchability-history-item{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:9px 11px;border:1px solid var(--border);border-radius:8px;background:var(--panel2)}
+.watchability-history-info{display:grid;gap:4px;min-width:0}
+.watchability-history-info strong{font-size:12px}
+.watchability-history-info span{font-size:11px;color:var(--sub)}
+.watchability-history-item button{flex:none;font-size:11px;padding:6px 9px}
+.watchability-report .watchability-table th:last-child,.watchability-report .watchability-table td:last-child{min-width:160px}
+.watchability-report .watchability-table td:last-child button{font-size:11px;padding:6px 8px;white-space:normal}
+
+.watchability-history{margin-top:16px;padding-top:14px;border-top:1px solid var(--border)}
+.watchability-history-heading{display:flex;align-items:center;justify-content:space-between;gap:10px}
+.watchability-history-heading strong{font-size:13px}
+.watchability-history-list{display:grid;gap:8px;margin-top:10px}
+.watchability-history-empty{margin:0;color:var(--sub);font-size:12px}
+.watchability-history-item{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:9px 11px;border:1px solid var(--border);border-radius:8px;background:var(--panel2)}
+.watchability-history-info{display:grid;gap:4px;min-width:0}
+.watchability-history-info strong{font-size:12px}
+.watchability-history-info span{font-size:11px;color:var(--sub)}
+.watchability-history-item button{flex:none;font-size:11px;padding:6px 9px}
+.watchability-report .watchability-table th:last-child,.watchability-report .watchability-table td:last-child{min-width:160px}
+.watchability-report .watchability-table td:last-child button{font-size:11px;padding:6px 8px;white-space:normal}
