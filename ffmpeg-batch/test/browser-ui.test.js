@@ -301,19 +301,53 @@ test('真实 Chromium：全工作区克隆、历史任务 DOM 恢复、日志滚
     window.request=async(url,data)=>url==='/api/status'?auditSnapshot:originalRequest(url,data);
     enableControls(model);
     function installVideo(video){
-      let time=0,paused=true,timer=null;
+      let time=0,paused=true,timer=null,nextFrameId=1;
+      const frameCallbacks=new Map();
+      const stats=window.__watchabilityFrameStats||(window.__watchabilityFrameStats={requested:0,requestedWhilePaused:0,delivered:0,cancelled:0,pending:0});
       Object.defineProperty(video,'duration',{configurable:true,get(){return 30;}});
       Object.defineProperty(video,'readyState',{configurable:true,get(){return 4;}});
       Object.defineProperty(video,'videoWidth',{configurable:true,get(){return 160;}});
       Object.defineProperty(video,'videoHeight',{configurable:true,get(){return 90;}});
-      Object.defineProperty(video,'currentTime',{configurable:true,get(){return time;},set(value){time=value;}});
+      Object.defineProperty(video,'currentTime',{configurable:true,get(){return time;},set(value){time=value;queueMicrotask(()=>video.dispatchEvent(new Event('seeked')));}});
       Object.defineProperty(video,'paused',{configurable:true,get(){return paused;}});
       Object.defineProperty(video,'seeking',{configurable:true,get(){return false;}});
       Object.defineProperty(video,'ended',{configurable:true,get(){return false;}});
       Object.defineProperty(video,'error',{configurable:true,get(){return null;}});
+      video.requestVideoFrameCallback=callback=>{
+        const id=nextFrameId++;
+        stats.requested++;
+        if(paused)stats.requestedWhilePaused++;
+        stats.pending++;
+        frameCallbacks.set(id,callback);
+        return id;
+      };
+      video.cancelVideoFrameCallback=id=>{
+        if(frameCallbacks.delete(id)){stats.cancelled++;stats.pending--;}
+      };
       video.load=()=>{};
-      video.play=()=>{paused=false;if(timer)clearInterval(timer);timer=setInterval(()=>time+=.25,50);return Promise.resolve();};
-      video.pause=()=>{paused=true;if(timer)clearInterval(timer);timer=null;};
+      video.play=()=>{
+        paused=false;
+        if(timer)clearInterval(timer);
+        timer=setInterval(()=>{
+          time+=.05;
+          const pending=[...frameCallbacks.entries()];
+          for(const [id,callback] of pending){
+            if(!frameCallbacks.delete(id))continue;
+            stats.pending--;
+            stats.delivered++;
+            callback(performance.now(),{mediaTime:time});
+          }
+        },50);
+        video.dispatchEvent(new Event('play'));
+        video.dispatchEvent(new Event('playing'));
+        return Promise.resolve();
+      };
+      video.pause=()=>{
+        paused=true;
+        if(timer)clearInterval(timer);
+        timer=null;
+        video.dispatchEvent(new Event('pause'));
+      };
     }
     installVideo(document.getElementById('compare-source'));
     installVideo(document.getElementById('compare-output'));
@@ -327,7 +361,7 @@ test('真实 Chromium：全工作区克隆、历史任务 DOM 恢复、日志滚
       }};
     };
     const original=window.startWatchabilityAudit;
-    window.startWatchabilityAudit=()=>original({points:2,playMs:200,frameSamples:1,readyTimeoutMs:500,seekTimeoutMs:500});
+    window.startWatchabilityAudit=()=>original({points:2,playMs:1200,frameSamples:3,readyTimeoutMs:500,seekTimeoutMs:500});
     const button=document.getElementById('verify-watchability');
     const enabled=!!button&&!button.disabled;
     button.click();
@@ -341,13 +375,27 @@ test('真实 Chromium：全工作区克隆、历史任务 DOM 恢复、日志滚
   assert.deepEqual(pauseCheck,{paused:true,stable:true,label:'继续验收'});
   await devtools.evaluate(`document.getElementById('watchability-pause').click()`);
   await devtools.until(`!window.__watchabilityAudit?.running && !document.getElementById('watchability-report').classList.contains('hidden')`,'可观看性验收报告生成');
-  const auditReport=await devtools.evaluate(`({summary:window.__watchabilityAudit.summary,status:window.__watchabilityAudit.results[0].status,points:window.__watchabilityAudit.results[0].points.length,allPassed:window.__watchabilityAudit.results[0].points.every(p=>p.status==='PASS'),dialogVisible:!document.getElementById('watchability-dialog').classList.contains('hidden'),compareClosed:document.getElementById('compare-dialog').classList.contains('hidden')})`);
+  const auditReport=await devtools.evaluate(`({summary:window.__watchabilityAudit.summary,status:window.__watchabilityAudit.results[0].status,points:window.__watchabilityAudit.results[0].points.length,allPassed:window.__watchabilityAudit.results[0].points.every(p=>p.status==='PASS'),dialogVisible:!document.getElementById('watchability-dialog').classList.contains('hidden'),compareClosed:document.getElementById('compare-dialog').classList.contains('hidden'),frameStats:window.__watchabilityFrameStats})`);
   assert.equal(auditReport.summary.pass,1,JSON.stringify(auditReport));
   assert.equal(auditReport.status,'PASS',JSON.stringify(auditReport));
   assert.equal(auditReport.points,2,JSON.stringify(auditReport));
   assert.equal(auditReport.allPassed,true,JSON.stringify(auditReport));
   assert.equal(auditReport.dialogVisible,true,JSON.stringify(auditReport));
   assert.equal(auditReport.compareClosed,true,JSON.stringify(auditReport));
+  assert.ok(auditReport.frameStats.requested>0,JSON.stringify(auditReport));
+  assert.equal(auditReport.frameStats.requestedWhilePaused,0,JSON.stringify(auditReport));
+  assert.equal(auditReport.frameStats.pending,0,JSON.stringify(auditReport));
+  const rowActions=await devtools.evaluate(`({count:document.querySelectorAll('#watchability-report-body button').length,label:document.querySelector('#watchability-report-body button')?.textContent})`);
+  assert.deepEqual(rowActions,{count:1,label:'原视频 / 结果视频对比'});
+  await devtools.evaluate(`document.querySelector('#watchability-report-body button').click()`);
+  const compareOpened=await devtools.evaluate(`!document.getElementById('compare-dialog').classList.contains('hidden') && document.getElementById('compare-title').textContent==='audit/good.mp4'`);
+  assert.equal(compareOpened,true);
+  await devtools.evaluate(`document.getElementById('close-compare').click();document.getElementById('watchability-report-close').click()`);
+  const history=await devtools.evaluate(`({count:document.querySelectorAll('#watchability-history-list .watchability-history-item').length,stored:JSON.parse(localStorage.getItem('ffmpeg-batch-watchability-reports-v2')||'[]').length})`);
+  assert.deepEqual(history,{count:1,stored:1});
+  await devtools.evaluate(`document.querySelector('#watchability-history-list button').click()`);
+  const reopened=await devtools.evaluate(`({visible:!document.getElementById('watchability-dialog').classList.contains('hidden'),title:document.getElementById('watchability-title').textContent,compareCount:document.querySelectorAll('#watchability-report-body button').length})`);
+  assert.deepEqual(reopened,{visible:true,title:'历史验收报告',compareCount:1});
   await devtools.evaluate(`document.getElementById('watchability-report-close').click();document.getElementById('verify-watchability').click()`);
   await devtools.until(`window.__watchabilityAudit?.running`,'第二次可观看性验收启动');
   await devtools.evaluate(`document.getElementById('watchability-stop').click()`);

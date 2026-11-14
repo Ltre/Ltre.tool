@@ -112,3 +112,21 @@ test('Q1-H：可观看性验收入口、遮罩控制、报告及脚本加载顺�
   assert.match(launcher,/verify-watchability/);
   assert.doesNotMatch(launcher,/getElementById\('(start|stop|retry|verify|verify-deep|scan|configure|new-task|save-template|delete|tpl-new)'/);
 });
+
+
+test('Q1-H 修订：Seek 不等待暂停帧回调，播放期间采集真实呈现帧并保留历史报告',()=>{
+  const html=get('public/index.html');
+  assert.match(html,/id="watchability-history-list"/);
+  assert.match(html,/可观看性验收记录/);
+  const ui=get('public/watchability-audit-ui.js');
+  assert.match(ui,/watchabilityStartFrameCollector/);
+  assert.match(ui,/requestVideoFrameCallback/);
+  assert.match(ui,/cancelVideoFrameCallback/);
+  assert.doesNotMatch(ui,/watchabilityWaitPresentedFrame/);
+  const seek=ui.slice(ui.indexOf('async function watchabilitySeek'),ui.indexOf('function watchabilityStartFrameCollector'));
+  assert.doesNotMatch(seek,/requestVideoFrameCallback/);
+  assert.match(ui,/WATCHABILITY_HISTORY_KEY/);
+  assert.match(ui,/openWatchabilityHistory/);
+  assert.match(ui,/saveWatchabilityHistory/);
+  assert.match(ui,/原视频 \/ 结果视频对比/);
+});
