@@ -112,29 +112,3 @@ test('Q1-H：可观看性验收入口、遮罩控制、报告及脚本加载顺�
   assert.match(launcher,/verify-watchability/);
   assert.doesNotMatch(launcher,/getElementById\('(start|stop|retry|verify|verify-deep|scan|configure|new-task|save-template|delete|tpl-new)'/);
 });
-
-test('Q1-H 修订：逐视频对比、历史记录和帧呈现等待入口齐备',()=>{
- const html=get('public/index.html');
- assert.match(html,/id="watchability-history-list"/);
- assert.match(html,/可观看性验收记录/);
- const ui=get('public/watchability-audit-ui.js');
- assert.match(ui,/原视频 \/ 结果视频对比/);
- assert.match(ui,/openCompare\(task\)/);
- assert.match(ui,/WATCHABILITY_HISTORY_KEY/);
- assert.match(ui,/openWatchabilityHistory/);
- assert.match(ui,/requestVideoFrameCallback/);
- assert.match(ui,/watchabilityWaitPresentedFrame/);
-});
-
-test('Q1-H 修订：逐视频对比、历史记录和帧呈现等待入口齐备',()=>{
- const html=get('public/index.html');
- assert.match(html,/id="watchability-history-list"/);
- assert.match(html,/可观看性验收记录/);
- const ui=get('public/watchability-audit-ui.js');
- assert.match(ui,/原视频 \/ 结果视频对比/);
- assert.match(ui,/openCompare\(task\)/);
- assert.match(ui,/WATCHABILITY_HISTORY_KEY/);
- assert.match(ui,/openWatchabilityHistory/);
- assert.match(ui,/requestVideoFrameCallback/);
- assert.match(ui,/watchabilityWaitPresentedFrame/);
-});

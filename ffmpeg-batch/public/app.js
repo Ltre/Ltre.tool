@@ -329,7 +329,6 @@ async function refresh() {
     renderBatchTemplateLibrary(model);
     renderSessions(snapshot);
     renderTree(model);
-    if(typeof renderWatchabilityHistory==='function')renderWatchabilityHistory();
     if(currentCompareTask)updateCompareNav();
   } catch (e) {setText('connection','连接断开');}
   finally {
