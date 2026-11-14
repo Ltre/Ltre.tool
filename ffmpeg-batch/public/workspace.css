@@ -165,3 +165,40 @@
 @media(max-width:760px){.batch-template-toolbar select,.batch-template-toolbar input{flex-basis:100%}
   .session-slot .session-delete{padding:6px}.toolbar #filter-keyword{min-width:100%}
   .file-head .size-delta-tag{font-size:10px}}
+
+
+/* Q1-H: blocking progress and report overlay for visual watchability checks. */
+.watchability-overlay{z-index:40}
+.watchability-modal{width:min(1000px,calc(100vw - 24px));max-height:calc(100dvh - 24px);overflow:auto}
+.watchability-running{padding:18px 20px 20px}
+.watchability-live-status{margin:0 0 12px;color:var(--sub);font-size:13px}
+.watchability-current{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;margin:10px 0;color:var(--text)}
+#watchability-current-file{min-width:0;overflow-wrap:anywhere}
+#watchability-progress-text{flex:none;color:var(--sub);font-size:12px;font-variant-numeric:tabular-nums}
+.watchability-progress-track{height:10px;border:1px solid var(--border);border-radius:10px;overflow:hidden;background:var(--panel2)}
+.watchability-progress-track span{display:block;width:0;height:100%;background:var(--accent);transition:width .15s}
+.watchability-progress-meta{display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-top:9px;color:var(--sub);font-size:11px}
+.watchability-actions{display:flex;justify-content:flex-end;gap:9px;margin-top:18px}
+.watchability-report{min-height:0}
+.watchability-report-summary{padding:14px 20px;margin:0;font-size:13px;font-weight:750}
+.watchability-table-wrap{max-height:min(55vh,520px);overflow:auto;padding:0 16px}
+.watchability-table{width:100%;border-collapse:collapse;font-size:12px}
+.watchability-table th,.watchability-table td{padding:9px 8px;text-align:left;vertical-align:top;border-bottom:1px solid var(--border)}
+.watchability-table th{position:sticky;top:0;z-index:1;background:var(--panel);color:var(--sub)}
+.watchability-table td:first-child{min-width:180px;max-width:300px;overflow-wrap:anywhere}
+.watchability-table td details{max-width:360px}
+.watchability-table td summary{cursor:pointer;color:var(--sub)}
+.watchability-table td ul{margin:7px 0 0;padding-left:18px}
+.watchability-table td li{margin:3px 0}
+.watchability-status.pass{color:var(--green);font-weight:750}
+.watchability-status.fail{color:var(--red);font-weight:750}
+.watchability-status.unverified,.watchability-status.incomplete,.watchability-status.error{color:var(--yellow);font-weight:750}
+.watchability-note{margin:12px 20px;color:var(--sub);font-size:11px;line-height:1.7}
+.watchability-report .modal-bottom{gap:10px;flex-wrap:wrap}
+.watchability-report .modal-bottom>div{display:flex;gap:8px}
+@media(max-width:760px){
+  .watchability-modal{width:calc(100vw - 12px)}
+  .watchability-table-wrap{padding:0 8px}
+  .watchability-table th,.watchability-table td{padding:7px 5px}
+  .watchability-table td:first-child{min-width:130px}
+}

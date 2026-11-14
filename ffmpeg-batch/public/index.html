@@ -71,6 +71,7 @@
           <button id="retry" class="secondary">重置失败 / 中断 / 冲突</button>
           <button id="verify" class="secondary">快速验收</button>
           <button id="verify-deep" class="secondary">完整解码验收</button>
+          <button id="verify-watchability" class="secondary" type="button">验收可观看性</button>
         </div>
         <div class="status-bar"><div id="activity-badge" class="activity">空闲</div><div class="notice" id="status-note">等待设置项目目录</div></div>
       </section>
@@ -133,11 +134,42 @@
       </div>
     </div>
   </div>
+  <div id="watchability-dialog" class="modal-overlay hidden watchability-overlay" role="dialog" aria-modal="true" aria-labelledby="watchability-title">
+    <div class="modal watchability-modal">
+      <div class="modal-top"><h3 id="watchability-title">正在验收视频可观看性</h3></div>
+      <section id="watchability-running" class="watchability-running">
+        <p id="watchability-live-status" class="watchability-live-status" role="status" aria-live="polite">正在准备视频列表</p>
+        <div class="watchability-current"><strong id="watchability-current-file">准备中</strong><span id="watchability-progress-text">0 / 0 个视频</span></div>
+        <div class="watchability-progress-track"><span id="watchability-progress-fill"></span></div>
+        <div class="watchability-progress-meta"><span id="watchability-completed-count">0 个已完成</span><span>每个视频 10 个检测点，每点自然播放 1.2 秒</span></div>
+        <div class="watchability-actions">
+          <button id="watchability-pause" class="secondary" type="button">暂停验收</button>
+          <button id="watchability-stop" class="danger" type="button">停止验收</button>
+        </div>
+      </section>
+      <section id="watchability-report" class="watchability-report hidden">
+        <p id="watchability-report-summary" class="watchability-report-summary"></p>
+        <div class="watchability-table-wrap">
+          <table class="watchability-table">
+            <thead><tr><th>视频</th><th>结果</th><th>通过点数</th><th>平均相似度</th><th>检测详情</th></tr></thead>
+            <tbody id="watchability-report-body"></tbody>
+          </table>
+        </div>
+        <p class="watchability-note">画面一致性通过 Canvas 抽帧与局部 SSIM、亮度及色彩差异进行自动筛查；轻微编码噪声允许存在。报告中的「无法判定」表示缺少可比较的原视频基准或浏览器无法读取画面，不等同于结果视频损坏。</p>
+        <div class="modal-bottom">
+          <span>报告包含每个视频的检测点、播放进度及画面相似度</span>
+          <div><button id="watchability-export" class="secondary" type="button">导出 JSON</button><button id="watchability-report-close" class="primary" type="button">关闭报告</button></div>
+        </div>
+      </section>
+    </div>
+  </div>
   <script src="/tree-stats.js" defer></script>
   <script src="/workspace-dom.js" defer></script>
   <script src="/compare-sync.js" defer></script>
   <script src="/file-filters.js" defer></script>
+  <script src="/watchability-audit.js" defer></script>
    <script src="/app.js" defer></script>
   <script src="/workspace-ui.js" defer></script>
+  <script src="/watchability-audit-ui.js" defer></script>
 </body>
 </html>

@@ -85,3 +85,30 @@ test('Q1-C：日志滚动末行、五个同步按钮和方向键双击规则',()
   assert.match(sync,/seekBy\(direction\*8\)/);
   assert.match(sync,/seekBy\(pending\.direction\*2\)/);
 });
+
+
+test('Q1-H：可观看性验收入口、遮罩控制、报告及脚本加载顺序齐备',()=>{
+  const html=get('public/index.html');
+  for(const id of ['verify-watchability','watchability-dialog','watchability-pause','watchability-stop',
+    'watchability-progress-fill','watchability-report','watchability-report-summary','watchability-report-body',
+    'watchability-export','watchability-report-close']) {
+    assert.match(html,new RegExp('id="'+id+'"'),id);
+  }
+  assert.ok(html.indexOf('watchability-audit.js')<html.indexOf('/app.js'),'画面比较核心必须先于应用脚本加载');
+  assert.ok(html.indexOf('watchability-audit-ui.js')>html.indexOf('/workspace-ui.js'),'验收控制器必须在双视频组件后加载');
+  const app=get('public/app.js');
+  assert.match(app,/verify-watchability/);
+  const audit=get('public/watchability-audit-ui.js');
+  assert.match(audit,/filter\(task => task\.status === 'done'\)/);
+  assert.match(audit,/openCompare\(task\)/);
+  assert.match(audit,/points: 10/);
+  assert.match(audit,/playMs: 1200/);
+  assert.match(audit,/watchabilityRun\.pause/);
+  assert.match(audit,/watchabilityRun\.stop/);
+  assert.match(audit,/WatchabilityAudit\.createVideoComparator/);
+  const css=get('public/workspace.css');
+  assert.match(css,/\.watchability-overlay\{z-index:40\}/);
+  const launcher=get('tool/video-compare-audit-visual.js');
+  assert.match(launcher,/verify-watchability/);
+  assert.doesNotMatch(launcher,/getElementById\('(start|stop|retry|verify|verify-deep|scan|configure|new-task|save-template|delete|tpl-new)'/);
+});

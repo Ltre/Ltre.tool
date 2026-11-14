@@ -105,7 +105,8 @@ async function action(endpoint, body = {}) {
 function enableControls(s) {
   const idle = s.activity === 'idle'; const trans = s.activity === 'transcoding';
   for (const id of ['configure','scan']) $(id).disabled = !idle && !draftSession;
-  for (const id of ['retry','verify','verify-deep']) $(id).disabled = !idle || draftSession;
+  for (const id of ['retry','verify','verify-deep','verify-watchability']) $(id).disabled = !idle || draftSession;
+$('verify-watchability').disabled = $('verify-watchability').disabled || !s.configured || !(s.tasks || []).some(task => task.status === 'done');
   $('new-task').disabled = false;
   $('save-template').disabled = !idle || !s.configured || draftSession;
   $('start').disabled = !idle || !s.scannedAt || draftSession;
