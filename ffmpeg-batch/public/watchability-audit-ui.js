@@ -88,6 +88,7 @@ async function watchabilitySeek(video, target, run, label) {
   const bounded = Math.max(0, Math.min(Math.max(0, video.duration - 0.04), target));
   if (video.error) return false;
   const timeoutMs = Math.min(run.options.seekTimeoutMs, 8000);
+  const deadline = Date.now() + timeoutMs;
   const needsSeek = video.seeking || Math.abs(video.currentTime - bounded) >= 0.08;
   if (needsSeek) {
     let seeked = false;
@@ -98,7 +99,6 @@ async function watchabilitySeek(video, target, run, label) {
       video.removeEventListener('seeked', onSeeked);
       return false;
     }
-    const deadline = Date.now() + timeoutMs;
     let lastStatus = 0;
     while (!seeked && Date.now() < deadline && !run.stopped && !video.error) {
       if (Date.now() - lastStatus >= 500) {
@@ -112,8 +112,7 @@ async function watchabilitySeek(video, target, run, label) {
     if (!seeked && (video.seeking || Math.abs(video.currentTime - bounded) >= 0.25)) return false;
   }
 
-  // A paused video may not deliver requestVideoFrameCallback until playback resumes.
-  const deadline = Date.now() + timeoutMs;
+  // Wait for the seek position and decoder state to settle before starting playback.
   let stableSince = 0;
   let lastStatus = 0;
   while (Date.now() < deadline) {
@@ -537,7 +536,7 @@ async function startWatchabilityAudit(overrides = {}) {
                       point.index + '/' + options.points + ' 点');
                   });
                   watchabilityPauseVideos(run);
-                  if (run.stopped || !playbackCompleted) break;
+                  if (run.stopped) break;
 
                   point.sourceAdvance = Number((source.currentTime-sourceStart).toFixed(3));
                   point.outputAdvance = Number((output.currentTime-outputStart).toFixed(3));
@@ -645,6 +644,10 @@ async function startWatchabilityAudit(overrides = {}) {
           }
           if(currentCompareTask)closeCompare();
           run.videos=[];
+        }
+        if (entry.status !== 'INCOMPLETE') {
+          run.currentPoint = options.points;
+          run.pointProgress = 1;
         }
         watchabilityProgress(run, `${task.relative}：${watchabilityStatusText(entry.status)}`);
         if(run.stopped)break;
