@@ -104,7 +104,7 @@ test('Q1-H：可观看性验收入口、遮罩控制、报告及脚本加载顺�
   assert.match(audit,/points: 10/);
   assert.match(audit,/playMs: 1200/);
   assert.match(audit,/watchabilityRun\.pause/);
-  assert.match(audit,/watchabilityRun\.stop/);
+  assert.match(audit,/watchabilityRun\?\.stop/);
   assert.match(audit,/WatchabilityAudit\.createVideoComparator/);
   const css=get('public/workspace.css');
   assert.match(css,/\.watchability-overlay\{z-index:40\}/);

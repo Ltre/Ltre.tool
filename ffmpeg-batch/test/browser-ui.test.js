@@ -294,7 +294,11 @@ test('真实 Chromium：全工作区克隆、历史任务 DOM 恢复、日志滚
   assert.equal(q1f.previousName,'ordinary.mp4');
   const auditSetup = await devtools.evaluate(`(() => {
     const task={id:'watchability-good',relative:'audit/good.mp4',status:'done',duration:30};
-    model={...model,configured:true,id:'watchability-session',activity:'idle',tasks:[task]};
+    const auditSnapshot={...model,configured:true,id:'watchability-session',activity:'idle',tasks:[task],sessions:[]};
+    model=auditSnapshot;
+    serverSnapshot=auditSnapshot;
+    const originalRequest=window.request;
+    window.request=async(url,data)=>url==='/api/status'?auditSnapshot:originalRequest(url,data);
     enableControls(model);
     function installVideo(video){
       let time=0,paused=true,timer=null;
