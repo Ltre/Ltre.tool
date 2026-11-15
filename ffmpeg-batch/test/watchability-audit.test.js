@@ -1,48 +1,50 @@
 'use strict';
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const {compareFrameData, DEFAULTS} = require('../public/watchability-audit');
-function frame(makePixel, width = DEFAULTS.width, height = DEFAULTS.height) {
-  const data = new Uint8ClampedArray(width * height * 4);
-  for (let y = 0; y < height; y++) {
-    for (let x = 0; x < width; x++) {
-      const offset = (y * width + x) * 4;
-      const [r,g,b] = makePixel(x,y);
-      data[offset]=r; data[offset+1]=g; data[offset+2]=b; data[offset+3]=255;
-    }
-  }
-  return data;
-}
-test('可观看性画面比较：相同帧通过且相似度为 1',()=>{
-  const a=frame((x,y)=>[(x*7+y*3)%256,(x*2+y*11)%256,(x*5+y*13)%256]);
-  const result=compareFrameData(a,new Uint8ClampedArray(a));
-  assert.equal(result.pass,true); assert.equal(result.ssim,1);
-  assert.equal(result.lumaMae,0); assert.equal(result.colorMae,0);
+const {DEFAULTS,evaluatePlaybackSample,summarizePlayback} = require('../public/watchability-audit');
+
+const playable = {
+  errorCode:0, ready:true, seekCompleted:true, playResolved:true,
+  playbackCompleted:true, advance:1.18, presentedFrames:28,
+  frameCallbackSupported:true
+};
+
+test('结果视频正常加载、连续播放并呈现视频帧时通过', () => {
+  assert.deepEqual(evaluatePlaybackSample(playable,DEFAULTS),{status:'PASS',reason:''});
 });
-test('可观看性画面比较：轻微编码噪声允许通过',()=>{
-  const a=frame((x,y)=>[40+(x*3+y)%160,30+(y*5)%180,50+(x*7)%150]);
-  const b=frame((x,y)=>{
-    const [r,g,blue]=[40+(x*3+y)%160,30+(y*5)%180,50+(x*7)%150];
-    const noise=((x+y)%3)-1;
-    return [r+noise*2,g-noise*2,blue+noise];
-  });
-  const result=compareFrameData(a,b);
-  assert.equal(result.pass,true,JSON.stringify(result));
-  assert.ok(result.ssim>0.98,JSON.stringify(result));
+test('明确的视频解码错误判定失败', () => {
+  const result = evaluatePlaybackSample({...playable,errorCode:3},DEFAULTS);
+  assert.equal(result.status,'FAIL');
+  assert.match(result.reason,/解码错误/);
 });
-test('可观看性画面比较：不同画面不能因平均亮度接近而误通过',()=>{
-  const a=frame((x,y)=>((x+y)%2?[235,235,235]:[20,20,20]));
-  const b=frame((x,y)=>((x+y)%2?[20,20,20]:[235,235,235]));
-  const result=compareFrameData(a,b);
-  assert.equal(result.pass,false,JSON.stringify(result));
-  assert.ok(result.ssim<0.82,JSON.stringify(result));
+test('浏览器不支持编码时无法判定，不误报文件损坏', () => {
+  const result = evaluatePlaybackSample({...playable,errorCode:4},DEFAULTS);
+  assert.equal(result.status,'UNVERIFIED');
+  assert.match(result.reason,/不支持/);
 });
-test('可观看性画面比较：色彩错误也会被检测',()=>{
-  const a=frame(()=>[230,30,30]), b=frame(()=>[30,30,230]);
-  const result=compareFrameData(a,b);
-  assert.equal(result.pass,false,JSON.stringify(result));
-  assert.ok(result.colorMae>40,JSON.stringify(result));
+test('网络或 I/O 读取异常无法判定', () => {
+  const result = evaluatePlaybackSample({...playable,errorCode:2},DEFAULTS);
+  assert.equal(result.status,'UNVERIFIED');
+  assert.match(result.reason,/I.?O/);
 });
-test('可观看性画面比较：拒绝尺寸不匹配的像素数据',()=>{
-  assert.throws(()=>compareFrameData(new Uint8Array(8),new Uint8Array(8)),/尺寸不匹配/);
+test('播放时间轴推进不足时无法判定', () => {
+  const result = evaluatePlaybackSample({...playable,advance:0.12},DEFAULTS);
+  assert.equal(result.status,'UNVERIFIED');
+  assert.match(result.reason,/推进不足/);
+});
+test('浏览器未呈现足够视频帧时无法判定', () => {
+  const result = evaluatePlaybackSample({...playable,presentedFrames:1},DEFAULTS);
+  assert.equal(result.status,'UNVERIFIED');
+  assert.match(result.reason,/呈现帧/);
+});
+test('浏览器不支持帧回调时以播放时间轴作为后备证据', () => {
+  const result = evaluatePlaybackSample({...playable,frameCallbackSupported:false,presentedFrames:0},DEFAULTS);
+  assert.equal(result.status,'PASS');
+});
+test('单个视频汇总优先级为失败、无法判定、通过及未完成', () => {
+  assert.equal(summarizePlayback([{status:'PASS'},{status:'PASS'}]),'PASS');
+  assert.equal(summarizePlayback([{status:'PASS'},{status:'UNVERIFIED'}]),'UNVERIFIED');
+  assert.equal(summarizePlayback([{status:'PASS'},{status:'FAIL'}]),'FAIL');
+  assert.equal(summarizePlayback([{status:'PASS'},{status:'INCOMPLETE'}]),'INCOMPLETE');
+  assert.equal(summarizePlayback([{status:'PASS'}],true),'INCOMPLETE');
 });
