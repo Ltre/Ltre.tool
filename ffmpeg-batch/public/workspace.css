@@ -169,6 +169,8 @@
 
 /* Q1-H: blocking progress and report overlay for visual watchability checks. */
 .watchability-overlay{z-index:40}
+#compare-dialog{z-index:50}
+.watchability-probe{position:fixed!important;left:-10000px!important;top:0!important;width:2px!important;height:2px!important;opacity:0!important;pointer-events:none!important}
 .watchability-modal{width:min(1000px,calc(100vw - 24px));max-height:calc(100dvh - 24px);overflow:auto}
 .watchability-running{padding:18px 20px 20px}
 .watchability-live-status{margin:0 0 12px;color:var(--sub);font-size:13px}
@@ -203,7 +205,7 @@
   .watchability-table td:first-child{min-width:130px}
 }
 
-.watchability-history{margin-top:16px;padding-top:14px;border-top:1px solid var(--border)}
+.watchability-history{scroll-margin-top:18px;margin-top:16px;padding-top:14px;border-top:1px solid var(--border)}
 .watchability-history-heading{display:flex;align-items:center;justify-content:space-between;gap:10px}
 .watchability-history-heading strong{font-size:13px}
 .watchability-history-list{display:grid;gap:8px;margin-top:10px}
