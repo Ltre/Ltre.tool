@@ -4,7 +4,7 @@
   if (root) root.WatchabilityAudit = api;
 })(typeof globalThis !== 'undefined' ? globalThis : this, () => {
   const DEFAULTS = Object.freeze({
-    points:10, playMs:1200, minAdvanceSeconds:0.55, minPresentedFrames:2,
+    points:10, playMs:1200, minAdvanceSeconds:0.25, minPresentedFrames:2,
     readyTimeoutMs:15000, seekTimeoutMs:8000
   });
   function verdict(status, reason) { return {status,reason:reason || ''}; }

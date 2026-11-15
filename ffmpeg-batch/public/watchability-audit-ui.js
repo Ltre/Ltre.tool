@@ -1,6 +1,6 @@
 let watchabilityRun = null;
 const WATCHABILITY_DEFAULTS = Object.freeze({points: 10, playMs: 1200,
-  readyTimeoutMs: 15000, seekTimeoutMs: 8000, minAdvanceSeconds: 0.55});
+  readyTimeoutMs: 15000, seekTimeoutMs: 8000, minAdvanceSeconds: 0.25});
 const watchabilitySleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 function watchabilityPauseVideos(run) {
   for (const video of run.videos || []) {
@@ -27,7 +27,7 @@ function watchabilityProgress(run, message) {
   const pointFraction = run.currentPoint > 0 ? ((run.currentPoint - 1 + withinPoint) / pointCount) : 0;
   const percent = total ? Math.min(100, ((run.currentTaskIndex + pointFraction) / total) * 100) : 100;
   $('watchability-progress-fill').style.width = percent.toFixed(2) + '%';
-  $('watchability-progress-text').textContent = `${Math.min(run.currentTaskIndex + 1, total)} / ${total} 个视频 · ${Math.min(run.currentPoint, run.options.points)} / ${run.options.points} 个检测点`;
+  $('watchability-progress-text').textContent = `${Math.min(run.currentTaskIndex + 1, total)} / ${total} 个视频 · ${Math.min(run.currentPoint, pointCount)} / ${pointCount} 个检测点`;
   $('watchability-current-file').textContent = run.currentEntry?.relative || '准备中';
   $('watchability-completed-count').textContent = `${run.results.filter(x => x.status !== 'INCOMPLETE').length} 个已完成`;
   $('watchability-live-status').textContent = run.message || '正在验收';
@@ -637,7 +637,8 @@ $('watchability-stop').addEventListener('click',()=>watchabilityRun?.stop());
 $('watchability-export').addEventListener('click',downloadWatchabilityReport);
 $('watchability-report-close').addEventListener('click',()=> $('watchability-dialog').classList.add('hidden'));
 $('watchability-history-refresh')?.addEventListener('click',renderWatchabilityHistory);
-$('jump-watchability-history')?.addEventListener('click',() => {
+document.addEventListener('click',event=>{
+  if (!event.target?.closest?.('#jump-watchability-history')) return;
   const target = $('watchability-history');
   if (!target) return;
   target.scrollIntoView({behavior:'smooth',block:'end'});

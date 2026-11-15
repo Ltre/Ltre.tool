@@ -37,6 +37,14 @@ test('浏览器未呈现足够视频帧时无法判定', () => {
   assert.equal(result.status,'UNVERIFIED');
   assert.match(result.reason,/呈现帧/);
 });
+test('短暂缓冲后仍有实际播放推进时通过，不因启动延迟误判', () => {
+  const result = evaluatePlaybackSample({...playable,advance:0.4,presentedFrames:8},DEFAULTS);
+  assert.equal(result.status,'PASS');
+});
+test('播放推进低于最低阈值时仍无法判定', () => {
+  const result = evaluatePlaybackSample({...playable,advance:0.2,presentedFrames:2},DEFAULTS);
+  assert.equal(result.status,'UNVERIFIED');
+});
 test('浏览器不支持帧回调时以播放时间轴作为后备证据', () => {
   const result = evaluatePlaybackSample({...playable,frameCallbackSupported:false,presentedFrames:0},DEFAULTS);
   assert.equal(result.status,'PASS');

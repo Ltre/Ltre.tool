@@ -128,6 +128,8 @@ test('Q1-H 修订：仅验收结果视频播放能力、保留报告并可直达
   assert.match(ui,/side=output/);
   assert.doesNotMatch(ui,/side=source|compareController\.deactivate/);
   assert.match(ui,/jump-watchability-history/);
+  assert.ok(ui.includes("document.addEventListener('click',event=>"));
+  assert.ok(ui.includes("minAdvanceSeconds: 0.25"));
   assert.match(ui,/scrollIntoView\(\{behavior:'smooth',block:'end'\}\)/);
   assert.match(ui,/WATCHABILITY_HISTORY_KEY/);
   assert.match(ui,/openWatchabilityHistory/);
