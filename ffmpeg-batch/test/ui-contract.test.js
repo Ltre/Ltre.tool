@@ -89,7 +89,7 @@ test('Q1-C：日志滚动末行、五个同步按钮和方向键双击规则',()
 
 test('Q1-H：可观看性验收入口、遮罩控制、报告及脚本加载顺序齐备',()=>{
   const html=get('public/index.html');
-  for(const id of ['verify-watchability','watchability-dialog','watchability-pause','watchability-stop',
+  for(const id of ['verify-watchability','jump-watchability-history','watchability-history','watchability-dialog','watchability-pause','watchability-stop',
     'watchability-progress-fill','watchability-report','watchability-report-summary','watchability-report-body',
     'watchability-export','watchability-report-close']) {
     assert.match(html,new RegExp('id="'+id+'"'),id);
@@ -100,33 +100,38 @@ test('Q1-H：可观看性验收入口、遮罩控制、报告及脚本加载顺�
   assert.match(app,/verify-watchability/);
   const audit=get('public/watchability-audit-ui.js');
   assert.match(audit,/filter\(task => task\.status === 'done'\)/);
-  assert.match(audit,/openCompare\(task\)/);
+  assert.match(audit,/openCompare\(currentTask\)/);
   assert.match(audit,/points: 10/);
   assert.match(audit,/playMs: 1200/);
   assert.match(audit,/watchabilityRun\.pause/);
   assert.match(audit,/watchabilityRun\?\.stop/);
-  assert.match(audit,/WatchabilityAudit\.createVideoComparator/);
+  assert.match(audit,/WatchabilityAudit\.evaluatePlaybackSample/);
+  assert.doesNotMatch(audit,/compareFrames|SSIM|lumaMae|colorMae|sourceSeeked|sourceDuration/);
   const css=get('public/workspace.css');
   assert.match(css,/\.watchability-overlay\{z-index:40\}/);
+  assert.match(css,/#compare-dialog\{z-index:50\}/);
   const launcher=get('tool/video-compare-audit-visual.js');
   assert.match(launcher,/verify-watchability/);
   assert.doesNotMatch(launcher,/getElementById\('(start|stop|retry|verify|verify-deep|scan|configure|new-task|save-template|delete|tpl-new)'/);
 });
 
 
-test('Q1-H 修订：Seek 不等待暂停帧回调，播放期间采集真实呈现帧并保留历史报告',()=>{
+test('Q1-H 修订：仅验收结果视频播放能力、保留报告并可直达历史记录',()=>{
   const html=get('public/index.html');
   assert.match(html,/id="watchability-history-list"/);
   assert.match(html,/可观看性验收记录/);
   const ui=get('public/watchability-audit-ui.js');
-  assert.match(ui,/watchabilityStartFrameCollector/);
+  assert.match(ui,/watchabilityStartFrameMonitor/);
   assert.match(ui,/requestVideoFrameCallback/);
   assert.match(ui,/cancelVideoFrameCallback/);
-  assert.doesNotMatch(ui,/watchabilityWaitPresentedFrame/);
-  const seek=ui.slice(ui.indexOf('async function watchabilitySeek'),ui.indexOf('function watchabilityStartFrameCollector'));
-  assert.doesNotMatch(seek,/requestVideoFrameCallback/);
+  assert.doesNotMatch(ui,/watchabilityWaitPresentedFrame|watchabilityStartFrameCollector|compareFrames|SSIM|lumaMae|colorMae/);
+  assert.match(ui,/side=output/);
+  assert.doesNotMatch(ui,/side=source|compareController\.deactivate/);
+  assert.match(ui,/jump-watchability-history/);
+  assert.match(ui,/scrollIntoView\(\{behavior:'smooth',block:'end'\}\)/);
   assert.match(ui,/WATCHABILITY_HISTORY_KEY/);
   assert.match(ui,/openWatchabilityHistory/);
   assert.match(ui,/saveWatchabilityHistory/);
   assert.match(ui,/原视频 \/ 结果视频对比/);
+  assert.doesNotMatch(ui,/watchability-dialog'\)\.classList\.add\('hidden'\);\s*openCompare/);
 });
