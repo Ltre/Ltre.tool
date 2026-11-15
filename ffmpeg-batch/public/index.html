@@ -72,6 +72,7 @@
           <button id="verify" class="secondary">快速验收</button>
           <button id="verify-deep" class="secondary">完整解码验收</button>
           <button id="verify-watchability" class="secondary" type="button">验收可观看性</button>
+          <button id="jump-watchability-history" class="ghost" type="button">直达验收记录 ↓</button>
         </div>
         <div class="status-bar"><div id="activity-badge" class="activity">空闲</div><div class="notice" id="status-note">等待设置项目目录</div></div>
       </section>
@@ -85,7 +86,7 @@
       <section class="panel export">
         <div><h2>结果与验收报告</h2><p>命令列表按目录层级导出；报告包含源/目标分辨率、源/输出文件大小、输出体积变化、进度、尝试次数、验收结果和失败原因。</p></div>
         <div class="export-actions"><a href="/api/export/commands" id="export-cmd" download>导出所有命令 .txt</a><a href="/api/export/report.csv" id="export-csv" download>验收报告 .csv</a><a href="/api/export/report.json" id="export-json" download>详细状态 .json</a></div>
-        <div class="watchability-history">
+        <div id="watchability-history" class="watchability-history">
           <div class="watchability-history-heading"><strong>可观看性验收记录</strong><button id="watchability-history-refresh" class="ghost" type="button">刷新记录</button></div>
           <div id="watchability-history-list" class="watchability-history-list"><p class="watchability-history-empty">当前任务暂无可观看性验收记录</p></div>
         </div>
@@ -155,13 +156,13 @@
         <p id="watchability-report-summary" class="watchability-report-summary"></p>
         <div class="watchability-table-wrap">
           <table class="watchability-table">
-            <thead><tr><th>视频</th><th>结果</th><th>通过点数</th><th>平均相似度</th><th>检测详情</th><th>操作</th></tr></thead>
+            <thead><tr><th>视频</th><th>结果</th><th>通过点数</th><th>平均播放推进</th><th>检测详情</th><th>操作</th></tr></thead>
             <tbody id="watchability-report-body"></tbody>
           </table>
         </div>
-        <p class="watchability-note">画面一致性通过实际呈现帧、局部 SSIM、亮度及色彩差异进行自动筛查；轻微编码噪声允许存在。Seek 阶段不等待暂停视频的帧回调；播放期间采集对应呈现帧。采样时序不稳定或相似度证据不足时记为「无法判定」，不直接判定转码失败。</p>
+        <p class="watchability-note">仅检测结果视频能否在多个时间位置正常加载、解码并连续播放，不比较原视频与结果视频的画面相似度。浏览器不支持某种编码或容器时会记为「无法判定」，这不代表文件损坏；原视频 / 结果视频对比仅供人工检查。</p>
         <div class="modal-bottom">
-          <span>报告包含每个视频的检测点、播放进度及画面相似度</span>
+          <span>报告包含每个视频的检测位置、播放时间轴推进和实际呈现帧数量</span>
           <div><button id="watchability-export" class="secondary" type="button">导出 JSON</button><button id="watchability-report-close" class="primary" type="button">关闭报告</button></div>
         </div>
       </section>
